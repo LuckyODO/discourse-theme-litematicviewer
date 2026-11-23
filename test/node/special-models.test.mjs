@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { PNG } from "pngjs";
 import { ATLAS } from "../../renderer/generated/texture-atlas.mjs";
 import {
   normalizeSpecialData,
@@ -60,6 +62,66 @@ test("single, double, trapped, ender and copper chests retain their actual textu
   assert.ok(right.faces.every((face) => face.texture.endsWith("normal_right")));
   const north = resolveSpecialModel(block("chest", { facing: "north" }));
   close(bounds(north).min[2], 0);
+});
+
+test("double-chest exterior faces sample opaque native strips instead of the transparent join strip", async () => {
+  const atlas = PNG.sync.read(
+    await readFile(new URL("../../assets/litematic-atlas.png", import.meta.url))
+  );
+  for (const name of [
+    "chest",
+    "trapped_chest",
+    "copper_chest",
+    "exposed_copper_chest",
+    "weathered_copper_chest",
+    "oxidized_copper_chest",
+  ]) {
+    for (const type of ["single", "left", "right"]) {
+      for (const facing of ["north", "east", "south", "west"]) {
+        const model = resolveSpecialModel(block(name, { type, facing }));
+        for (const face of model.faces) {
+          const us = face.uvs
+            .filter((_value, index) => index % 2 === 0)
+            .map((value) => value * atlas.width);
+          const vs = face.uvs
+            .filter((_value, index) => index % 2 === 1)
+            .map((value) => (1 - value) * atlas.height);
+          for (
+            let y = Math.round(Math.min(...vs));
+            y < Math.round(Math.max(...vs));
+            y++
+          ) {
+            for (
+              let x = Math.round(Math.min(...us));
+              x < Math.round(Math.max(...us));
+              x++
+            ) {
+              assert.equal(
+                atlas.data[(y * atlas.width + x) * 4 + 3],
+                255,
+                `${name}/${type}/${facing}: exterior UV samples transparent pixel ${x},${y}`
+              );
+            }
+          }
+        }
+      }
+    }
+  }
+  const left = resolveSpecialModel(
+    block("chest", { type: "left", facing: "south" })
+  );
+  const tile = ATLAS.tiles["entity/chest/normal_left"];
+  const outerWall = left.faces.find((face) => face.normal[0] > 0.99);
+  assert.deepEqual(
+    outerWall.uvs.map((value, index) =>
+      Math.round(
+        index % 2
+          ? (1 - value) * ATLAS.height - tile.y
+          : value * ATLAS.width - tile.x
+      )
+    ),
+    [43, 43, 43, 33, 29, 33, 29, 43]
+  );
 });
 
 test("modern and legacy banner appearance data normalize for batching and preserve layer order", () => {

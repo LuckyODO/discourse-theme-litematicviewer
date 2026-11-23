@@ -31,12 +31,12 @@ export function createSpecialShowcaseFixture({ patterns = true } = {}) {
   });
   put(4, 1, 2, "chest", {
     facing: "south",
-    type: "left",
+    type: "right",
     waterlogged: "false",
   });
   put(5, 1, 2, "chest", {
     facing: "south",
-    type: "right",
+    type: "left",
     waterlogged: "false",
   });
   put(7, 1, 2, "trapped_chest", {

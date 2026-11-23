@@ -71,6 +71,37 @@ function positionHash(x, y, z) {
   );
 }
 
+function chestConnection(entry) {
+  const name = typeof entry === "string" ? entry : entry.name;
+  const properties = entry.properties || {};
+  if (
+    !/^minecraft:(?:chest|trapped_chest|(?:waxed_)?(?:(?:exposed|weathered|oxidized)_)?copper_chest)$/.test(
+      name
+    ) ||
+    !["left", "right"].includes(properties.type)
+  ) {
+    return null;
+  }
+  const facing = properties.facing || "north";
+  const clockwise = {
+    north: [1, 0],
+    east: [0, 1],
+    south: [-1, 0],
+    west: [0, -1],
+  }[facing];
+  if (!Array.isArray(clockwise)) {
+    return null;
+  }
+  const sign = properties.type === "left" ? 1 : -1;
+  return {
+    name,
+    facing,
+    type: properties.type === "left" ? "right" : "left",
+    dx: clockwise[0] * sign,
+    dz: clockwise[1] * sign,
+  };
+}
+
 function linear(hex) {
   return [0, 2, 4].map((offset) => {
     const channel = parseInt(hex.slice(offset, offset + 2), 16) / 255;
@@ -809,8 +840,9 @@ class MeshWriter {
  * to scene.bounds.min so even distant regions retain Float32 block precision. */
 export function buildMesh(scene, cutY = Infinity) {
   const origin = scene.bounds?.min || [0, 0, 0];
-  const regions = scene.regions.map((region) => ({
+  const regions = scene.regions.map((region, regionIndex) => ({
     ...region,
+    regionIndex,
     models: new Map(),
     decorations: new Map(),
     max: region.position.map((value, axis) => value + region.size[axis]),
@@ -819,6 +851,50 @@ export function buildMesh(scene, cutY = Infinity) {
   let variantCount = 0;
   let compiledFaceCount = 0;
   const compiledStates = new Map();
+  // Only region-boundary lookups can cross this short adjacency list. No
+  // per-cell map, string keys, or copy of the decoded block volume is needed.
+  const adjacent = regions.map((region, index) =>
+    regions.filter(
+      (other, otherIndex) =>
+        index !== otherIndex &&
+        region.position.every(
+          (value, axis) =>
+            value <= other.max[axis] && region.max[axis] >= other.position[axis]
+        )
+    )
+  );
+  const entryAt = (region, x, y, z) => {
+    const [sx, sy, sz] = region.size;
+    x -= region.position[0];
+    y -= region.position[1];
+    z -= region.position[2];
+    if (x < 0 || y < 0 || z < 0 || x >= sx || y >= sy || z >= sz) {
+      return null;
+    }
+    const entry = region.palette[region.blocks[x + sx * (z + sz * y)]];
+    const name = typeof entry === "string" ? entry : entry?.name;
+    return name?.startsWith("minecraft:") && AIR.has(name.slice(10))
+      ? null
+      : entry;
+  };
+  const chestIsPaired = (region, connection, x, y, z) => {
+    x += connection.dx;
+    z += connection.dz;
+    let other = entryAt(region, x, y, z);
+    if (!other) {
+      for (const candidate of adjacent[region.regionIndex]) {
+        other = entryAt(candidate, x, y, z);
+        if (other) {
+          break;
+        }
+      }
+    }
+    return (
+      other?.name === connection.name &&
+      (other.properties?.facing || "north") === connection.facing &&
+      other.properties?.type === connection.type
+    );
+  };
   const modelFor = (region, index, x, y, z) => {
     let state = region.models.get(index);
     if (!state) {
@@ -846,6 +922,7 @@ export function buildMesh(scene, cutY = Infinity) {
         state = {
           entry,
           period: vanillaModelSeedPeriod(entry),
+          chest: chestConnection(entry),
           variants: new Map(),
         };
         compiledStates.set(key, state);
@@ -872,9 +949,24 @@ export function buildMesh(scene, cutY = Infinity) {
         }
       }
     }
-    const variant = decoration ? `${seed}:${decoration}` : seed;
+    // Selection boundaries can retain a double-chest state without its other
+    // half. Render that position as a closed single chest, using a distinct
+    // cached variant so complete pairs elsewhere keep their original geometry.
+    const standaloneChest =
+      state.chest && !chestIsPaired(region, state.chest, x, y, z);
+    const variant = standaloneChest
+      ? "single-chest"
+      : decoration
+        ? `${seed}:${decoration}`
+        : seed;
     if (!state.variants.has(variant)) {
-      const model = compileModel(state.entry, seed, blockEntity);
+      const effectiveEntry = standaloneChest
+        ? {
+            ...state.entry,
+            properties: { ...state.entry.properties, type: "single" },
+          }
+        : state.entry;
+      const model = compileModel(effectiveEntry, seed, blockEntity);
       if (model && ++variantCount > MAX_MESH_MODELS) {
         const error = new Error(
           "The schematic has too many decorated model variants to preview."
@@ -894,18 +986,6 @@ export function buildMesh(scene, cutY = Infinity) {
     }
     return state.variants.get(variant);
   };
-  // Only region-boundary lookups can cross this short adjacency list. No
-  // per-cell map, string keys, or copy of the decoded block volume is needed.
-  const adjacent = regions.map((region, index) =>
-    regions.filter(
-      (other, otherIndex) =>
-        index !== otherIndex &&
-        region.position.every(
-          (value, axis) =>
-            value <= other.max[axis] && region.max[axis] >= other.position[axis]
-        )
-    )
-  );
   const modelAt = (region, x, y, z) => {
     const [ox, oy, oz] = region.position;
     const [sx, sy, sz] = region.size;

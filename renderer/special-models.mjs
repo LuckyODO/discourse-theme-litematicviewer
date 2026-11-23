@@ -288,6 +288,29 @@ function cubeUv(width, height, depth, u = 0, v = 0) {
   };
 }
 
+// ChestModel keeps ModelPart's native Y-up geometry, unlike the humanoid
+// orientation used by cubeUv. Its WEST/NORTH/EAST/SOUTH strips occur in that
+// order in the PNG. Double-chest textures deliberately leave the seam-side
+// strip transparent, so rotating these UV strips makes the outer wall vanish.
+// Rectangles also preserve ModelPart.Polygon's orientation for our CCW corners.
+function chestUv(width, height, depth, u = 0, v = 0) {
+  const sideTop = v + depth;
+  const sideBottom = sideTop + height;
+  return {
+    west: [u + depth, sideBottom, u, sideTop],
+    east: [u + 2 * depth + width, sideBottom, u + depth + width, sideTop],
+    down: [u + depth, v, u + depth + width, sideTop],
+    up: [u + depth + width, sideTop, u + depth + 2 * width, v],
+    north: [u + depth + width, sideBottom, u + depth, sideTop],
+    south: [
+      u + 2 * depth + 2 * width,
+      sideBottom,
+      u + 2 * depth + width,
+      sideTop,
+    ],
+  };
+}
+
 function builder() {
   const faces = [];
   let supported = true;
@@ -380,11 +403,11 @@ function chest(id, properties) {
   const transform = (point) =>
     rotate(point, "y", southRotation(properties.facing || "north"));
   const omit = type === "left" ? ["west"] : type === "right" ? ["east"] : [];
-  result.box(texture, [x0, 0, 1], [x1, 10, 15], cubeUv(width, 10, 14, 0, 19), {
+  result.box(texture, [x0, 0, 1], [x1, 10, 15], chestUv(width, 10, 14, 0, 19), {
     transform,
     omit: [...omit, "up"],
   });
-  result.box(texture, [x0, 9, 1], [x1, 14, 15], cubeUv(width, 5, 14), {
+  result.box(texture, [x0, 9, 1], [x1, 14, 15], chestUv(width, 5, 14), {
     transform,
     omit: [...omit, "down"],
   });
@@ -394,7 +417,7 @@ function chest(id, properties) {
     texture,
     [lockX, 7, 15],
     [lockX + lockWidth, 11, 16],
-    cubeUv(lockWidth, 4, 1),
+    chestUv(lockWidth, 4, 1),
     { transform, omit }
   );
   return result.finish();

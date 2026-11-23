@@ -4,7 +4,7 @@
   "authors": "LuckyODO",
   "about_url": "https://github.com/LuckyODO/discourse-theme-litematicviewer",
   "license_url": "https://github.com/LuckyODO/discourse-theme-litematicviewer/blob/main/LICENSE",
-  "theme_version": "2.3.0",
+  "theme_version": "2.3.1",
   "minimum_discourse_version": "2026.10.0-latest",
   "maximum_discourse_version": null,
   "assets": {
