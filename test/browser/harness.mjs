@@ -79,7 +79,7 @@ function open(item) {
       more_materials: "种其他方块",
       blocks: "个方块",
       dimensions: "尺寸",
-      basic_models: "基础模型 · 部分方块已简化",
+      basic_models: "原版材质 · 部分模型已简化",
     },
     onStatus(event) {
       window.previewEvents.push(event);

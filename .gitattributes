@@ -1,0 +1,5 @@
+# Source containers retain image bytes as base64, independent of text newlines.
+texture-source/*.json text eol=lf
+# Generated scripts have deterministic LF output on every platform.
+renderer/generated/*.mjs text eol=lf
+assets/*.js text eol=lf

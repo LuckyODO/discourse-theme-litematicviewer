@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { ATLAS } from "../../renderer/generated/texture-atlas.mjs";
 import {
   buildMesh,
   MAX_MESH_FACES,
@@ -54,6 +55,12 @@ test("an isolated cube has six correctly wound faces and finite vertex colors", 
   assert.equal(mesh.positions.length, 108);
   assert.equal(mesh.positions.length, mesh.normals.length);
   assert.equal(mesh.positions.length, mesh.colors.length);
+  assert.equal(mesh.uvs.length, mesh.faceCount * 12);
+  assert.ok(
+    mesh.uvs.every(
+      (value) => Number.isFinite(value) && value >= 0 && value <= 1
+    )
+  );
   assert.equal(area(mesh), 6);
   assert.ok(
     mesh.colors.every(
@@ -275,8 +282,8 @@ test("logs distinguish end grain axis and unknown blocks have stable distinct co
   const meshFor = (entry) =>
     buildMesh({ regions: [region({ palette: [entry] })] });
   assert.notDeepEqual(
-    meshFor({ name: "minecraft:oak_log", properties: { axis: "x" } }).colors,
-    meshFor({ name: "minecraft:oak_log", properties: { axis: "y" } }).colors
+    meshFor({ name: "minecraft:oak_log", properties: { axis: "x" } }).uvs,
+    meshFor({ name: "minecraft:oak_log", properties: { axis: "y" } }).uvs
   );
   const one = meshFor({ name: "example:machine_one" });
   assert.deepEqual(one.colors, meshFor({ name: "example:machine_one" }).colors);
@@ -286,19 +293,89 @@ test("logs distinguish end grain axis and unknown blocks have stable distinct co
   );
 });
 
-test("stone bricks stay gray and modded blocks named air remain visible", () => {
+test("textured bricks keep neutral vertex colors and modded air remains visible", () => {
   const stone = buildMesh({
     regions: [region({ palette: [{ name: "minecraft:stone_bricks" }] })],
   });
   const brick = buildMesh({
     regions: [region({ palette: [{ name: "minecraft:bricks" }] })],
   });
-  assert.ok(Math.abs(stone.colors[0] - stone.colors[1]) < 0.04);
-  assert.ok(brick.colors[0] - brick.colors[1] > 0.1);
+  assert.deepEqual(stone.colors, brick.colors);
+  assert.notDeepEqual(stone.uvs, brick.uvs);
+  for (let index = 0; index < stone.colors.length; index += 3) {
+    assert.equal(stone.colors[index], stone.colors[index + 1]);
+    assert.equal(stone.colors[index + 1], stone.colors[index + 2]);
+  }
   assert.equal(
     buildMesh({ regions: [region({ palette: [{ name: "example:air" }] })] })
       .faceCount,
     6
+  );
+});
+
+test("partially occluded faces crop their original block UVs without stretching", () => {
+  const mesh = buildMesh({
+    regions: [
+      region({
+        size: [2, 1, 1],
+        palette: [
+          { name: "minecraft:stone" },
+          { name: "minecraft:stone_slab" },
+        ],
+        blocks: new Uint32Array([0, 1]),
+      }),
+    ],
+  });
+  const tile = ATLAS.tiles.stone;
+  const pixelYs = [];
+  for (let vertex = 0; vertex < mesh.positions.length / 3; vertex++) {
+    const offset = vertex * 3;
+    if (mesh.positions[offset] === 1 && mesh.normals[offset] === 1) {
+      const y = mesh.positions[offset + 1];
+      const v = mesh.uvs[vertex * 2 + 1];
+      const localV = ((1 - v) * ATLAS.height - tile.y) / tile.height;
+      assert.ok(Math.abs(localV - (1 - y)) < 1e-5);
+      pixelYs.push(localV);
+    }
+  }
+  assert.equal(pixelYs.length, 6);
+  assert.equal(Math.min(...pixelYs), 0);
+  assert.equal(Math.max(...pixelYs), 0.5);
+});
+
+test("glass and leaves preserve opaque neighbor surfaces behind their cutouts", () => {
+  for (const cutout of ["glass", "oak_leaves"]) {
+    const mesh = buildMesh({
+      regions: [
+        region({
+          size: [2, 1, 1],
+          palette: [
+            { name: "minecraft:stone" },
+            { name: `minecraft:${cutout}` },
+          ],
+          blocks: new Uint32Array([0, 1]),
+        }),
+      ],
+    });
+    assert.equal(mesh.faceCount, 11);
+    assert.equal(area(mesh), 11);
+    assert.ok(
+      Array.from(
+        { length: mesh.positions.length / 3 },
+        (_, vertex) => vertex
+      ).some(
+        (vertex) =>
+          mesh.positions[vertex * 3] === 1 && mesh.normals[vertex * 3] === 1
+      )
+    );
+  }
+  assert.equal(
+    buildMesh({
+      regions: [
+        region({ size: [2, 1, 1], palette: [{ name: "minecraft:glass" }] }),
+      ],
+    }).faceCount,
+    12
   );
 });
 

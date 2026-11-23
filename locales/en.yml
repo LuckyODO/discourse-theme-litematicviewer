@@ -1,6 +1,6 @@
 en:
   theme_metadata:
-    description: "Preview uploaded Litematic schematics in a 3D dialog using the bundled renderer, with a separate download button."
+    description: "Preview uploaded Litematic schematics with bundled vanilla textures in a 3D dialog, with a separate download button."
     settings:
       enabled: "Add 3D preview and download controls to .litematic attachments in topics."
       max_preview_size_mb: "Maximum compressed attachment size to preview, in MiB. Downloads remain available. Decompressed data and model complexity have separate limits."
@@ -20,7 +20,7 @@ en:
     more_materials: "more block types"
     blocks: "blocks"
     dimensions: "Dimensions"
-    basic_models: "Basic models · some blocks simplified"
+    basic_models: "Vanilla textures · simplified models"
     download_status: "Downloading schematic…"
     viewer: "Preparing 3D preview…"
     hint: "Drag to rotate · Scroll or pinch to zoom · Esc to close"

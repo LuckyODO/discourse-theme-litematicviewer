@@ -1,0 +1,28 @@
+# Minecraft texture assets
+
+The PNG artwork encoded in `26.3.json`, the generated `assets/litematic-atlas.png`, and the
+image encoded in `renderer/generated/atlas-image.mjs` originate from Minecraft
+Java Edition 26.3. Copyright belongs to Mojang AB and Microsoft. These assets
+are **not** licensed under this repository's MIT code license.
+
+The official source manifest, client archive SHA-1, release version, and scope
+of extraction are recorded in `source.json`. Only block texture PNG files and
+their animation metadata were extracted; the client archive and game code are
+not included in the distributed repository.
+
+The source container stores each original file's bytes as base64 under its
+relative filename. Packing the sources into one file keeps the theme below
+Discourse's repository file-count limit and supports offline atlas rebuilding.
+
+Related official terms:
+
+- [Minecraft EULA](https://www.minecraft.net/en-us/eula)
+- [Minecraft Usage Guidelines](https://www.minecraft.net/en-us/usage-guidelines)
+
+The atlas build script is original project code and remains covered by the
+project's MIT license. The generated atlas preserves the native pixel dimensions
+of each texture or its first displayed animation frame. Texture content and code
+retain their separate ownership and terms.
+
+NOT AN OFFICIAL MINECRAFT PRODUCT. NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR
+MICROSOFT.

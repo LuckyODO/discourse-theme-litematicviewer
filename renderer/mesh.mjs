@@ -1,4 +1,5 @@
 /* eslint-disable no-bitwise -- Integer hashing gives stable original block color variation. */
+import { blockTextures } from "./block-textures.mjs";
 
 export const MAX_MESH_FACES = 200000;
 export const MAX_MESH_MODELS = 8192;
@@ -11,6 +12,7 @@ const AXES = [
   [0, 2],
   [0, 1],
 ];
+const FALLBACK_TEXTURES = blockTextures("preview:fallback");
 const DYES = {
   white: "e5e4df",
   orange: "d97827",
@@ -413,6 +415,7 @@ function compileModel(entry) {
   }
   const properties = entry.properties || {};
   const color = colorFor(name || "unknown");
+  const textures = blockTextures(entry);
   const boxes = modelBoxes(id, properties, color);
   const faces = [];
   for (let index = 0; index < boxes.length; index++) {
@@ -444,6 +447,9 @@ function compileModel(entry) {
             );
           }
         }
+        const texture = (item.color ? FALLBACK_TEXTURES : textures)[
+          axis * 2 + (sign > 0 ? 1 : 0)
+        ];
         for (const rect of rectangles) {
           faces.push({
             axis,
@@ -451,7 +457,10 @@ function compileModel(entry) {
             plane,
             rect,
             boundary: plane === (sign > 0 ? 1 : 0),
-            color: item.color || faceColor(id, properties, color, axis, sign),
+            uv: texture.uv,
+            color: texture.textured
+              ? texture.tint
+              : item.color || faceColor(id, properties, color, axis, sign),
           });
         }
       }
@@ -460,6 +469,7 @@ function compileModel(entry) {
   return {
     boxes,
     faces,
+    occludes: !textures.some((texture) => texture.cutout),
     full:
       boxes.length === 1 &&
       boxes[0].bounds.every((value, index) => value === (index < 3 ? 0 : 1)),
@@ -486,6 +496,7 @@ class MeshWriter {
         positions: new Float32Array(CHUNK_FACES * 18),
         normals: new Float32Array(CHUNK_FACES * 18),
         colors: new Float32Array(CHUNK_FACES * 18),
+        uvs: new Float32Array(CHUNK_FACES * 12),
       });
     }
     const chunk = this.chunks[this.chunks.length - 1];
@@ -509,7 +520,11 @@ class MeshWriter {
           ? 0.87
           : 0.94) * variation;
     let offset = slot * 18;
+    let uvOffset = slot * 12;
     for (const corner of winding) {
+      const [a, b] = corners[corner];
+      chunk.uvs[uvOffset++] = face.uv[0] * a + face.uv[1] * b + face.uv[2];
+      chunk.uvs[uvOffset++] = face.uv[3] * a + face.uv[4] * b + face.uv[5];
       for (let axis = 0; axis < 3; axis++) {
         const coordinate =
           axis === face.axis ? face.plane : corners[corner][axis === u ? 0 : 1];
@@ -528,6 +543,7 @@ class MeshWriter {
       positions: new Float32Array(length),
       normals: new Float32Array(length),
       colors: new Float32Array(length),
+      uvs: new Float32Array(this.faceCount * 12),
       faceCount: this.faceCount,
     };
     let offset = 0;
@@ -536,6 +552,10 @@ class MeshWriter {
       for (const key of ["positions", "normals", "colors"]) {
         result[key].set(chunk[key].subarray(0, count), offset);
       }
+      result.uvs.set(
+        chunk.uvs.subarray(0, (count / 18) * 12),
+        (offset / 18) * 12
+      );
       offset += count;
     }
     this.chunks = [];
@@ -661,10 +681,10 @@ export function buildMesh(scene, cutY = Infinity) {
             const other = face.boundary
               ? neighbors[face.axis * 2 + (face.sign > 0 ? 1 : 0)]
               : null;
-            if (other?.full) {
+            if (other?.occludes && other.full) {
               continue;
             }
-            if (other) {
+            if (other?.occludes) {
               const [u, v] = AXES[face.axis];
               for (const item of other.boxes) {
                 const bounds = item.bounds;

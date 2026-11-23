@@ -5,3 +5,5 @@ node_modules
 test-results/
 playwright-report/
 tsconfig.tsbuildinfo
+# Unpacked local cache; the distributable texture source is a versioned JSON file.
+texture-source/26.3/

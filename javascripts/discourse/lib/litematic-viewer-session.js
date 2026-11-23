@@ -5,6 +5,7 @@ const ERROR_CATEGORIES = new Set([
   "too_complex",
   "unsupported",
   "graphics",
+  "configuration",
   "viewer",
   "timeout",
 ]);

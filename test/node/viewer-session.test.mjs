@@ -322,6 +322,15 @@ test("renderer failure maps unknown messages to a safe category and disposes", a
   assert.equal(h.viewers[0].destroyed, true);
 });
 
+test("bundled texture decoding failure retains the asset configuration error", async (t) => {
+  const h = harness(t);
+  h.start();
+  await settle();
+  h.viewers[0].options.onError("configuration");
+  assert.equal(h.statuses.at(-1).error, "configuration");
+  assert.equal(h.viewers[0].destroyed, true);
+});
+
 test("synchronous graphics failure still disposes newly returned renderer", async (t) => {
   const h = harness(t);
   let destroyed = false;

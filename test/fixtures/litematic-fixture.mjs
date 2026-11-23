@@ -1,7 +1,7 @@
 /* eslint-disable no-bitwise -- Litematic stores palette indices in packed bit arrays. */
 import { gzipSync } from "node:zlib";
 
-// Original synthetic pavilion; no Minecraft or third-party assets are bundled.
+// Original synthetic pavilion; this fixture contains block IDs, not game assets.
 // Each palette index is packed continuously, least-significant bits first.
 export function createLitematicFixture() {
   const text = (value) => {

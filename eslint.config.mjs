@@ -1,3 +1,6 @@
 import DiscourseRecommendedTheme from "@discourse/lint-configs/eslint-theme";
 
-export default [...DiscourseRecommendedTheme];
+export default [
+  { ignores: ["renderer/generated/**"] },
+  ...DiscourseRecommendedTheme,
+];

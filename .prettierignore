@@ -1,0 +1,2 @@
+# Deterministic build output, including embedded PNG bytes.
+renderer/generated/

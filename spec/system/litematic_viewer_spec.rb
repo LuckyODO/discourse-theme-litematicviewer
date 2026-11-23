@@ -171,6 +171,9 @@ RSpec.describe "Litematic attachment previews" do
                     bounds: data.bounds,
                     faceCount: data.faceCount,
                     positionCount: data.positions.length,
+                    uvCount: data.uvs.length,
+                    validUVs: data.uvs.every((value) => Number.isFinite(value) && value >= 0 && value <= 1),
+                    texturedUVs: data.uvs.some((value) => value !== data.uvs[0]),
                   });
                 };
                 worker.postMessage({ type: "load", id: 1, buffer }, [buffer]);
@@ -196,6 +199,9 @@ RSpec.describe "Litematic attachment previews" do
       },
       "faceCount" => 6,
       "positionCount" => 108,
+      "uvCount" => 72,
+      "validUVs" => true,
+      "texturedUVs" => true,
     )
     expect(asset_requests.uniq).to eq([@asset_paths.last])
     expect(download_requests.size).to eq(1)

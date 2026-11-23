@@ -5,15 +5,24 @@ import {
   BufferGeometry,
   Color,
   DirectionalLight,
+  DoubleSide,
   GridHelper,
   Mesh,
   MeshLambertMaterial,
+  NearestFilter,
   PerspectiveCamera,
   Scene,
+  SRGBColorSpace,
+  Texture,
   Vector3,
   WebGLRenderer,
 } from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import {
+  ATLAS_IMAGE_BASE64,
+  ATLAS_SIZE,
+  TEXTURE_VERSION,
+} from "./generated/atlas-image.mjs";
 
 const DEFAULT_LABELS = {
   canvas_label: "Interactive 3D preview",
@@ -26,7 +35,7 @@ const DEFAULT_LABELS = {
   more_materials: "more block types",
   blocks: "blocks",
   dimensions: "Dimensions",
-  basic_models: "Basic models · some blocks simplified",
+  basic_models: "Vanilla textures · simplified models",
 };
 
 function element(tag, className, text) {
@@ -53,6 +62,7 @@ export function create({
   const header = element("div", "litematic-viewer__header");
   const summary = element("div", "litematic-model-summary");
   const note = element("small", "litematic-model-note", copy.basic_models);
+  note.title = `Minecraft Java ${TEXTURE_VERSION}`;
   const viewport = element("div", "litematic-canvas");
   const toolbar = element("div", "litematic-viewer__toolbar");
   const layerLabel = element(
@@ -80,7 +90,7 @@ export function create({
   root.append(header, viewport, toolbar, note);
   container.append(root);
 
-  let renderer, controls, worker, resizeObserver, mesh, grid;
+  let renderer, controls, worker, resizeObserver, mesh, grid, texture, bitmap;
   let stopped = false;
   let ready = false;
   let frame = 0;
@@ -91,7 +101,11 @@ export function create({
   let box;
   const scene = new Scene();
   const camera = new PerspectiveCamera(42, 1, 0.1, 10000);
-  const material = new MeshLambertMaterial({ vertexColors: true });
+  const material = new MeshLambertMaterial({
+    vertexColors: true,
+    alphaTest: 0.1,
+    side: DoubleSide,
+  });
   const cleanup = [];
 
   function listen(target, type, callback, options) {
@@ -115,6 +129,8 @@ export function create({
     grid?.geometry.dispose();
     grid?.material.dispose();
     material.dispose();
+    texture?.dispose();
+    bitmap?.close();
     renderer?.dispose();
     renderer?.forceContextLoss();
     root.remove();
@@ -126,6 +142,56 @@ export function create({
     }
     destroy();
     onError(category);
+  }
+
+  async function loadTextureAndStart() {
+    try {
+      // Image bytes travel in the same local theme script, including on forums
+      // whose uploads use a CDN. Decoding needs no image URL or network request.
+      const binary = atob(ATLAS_IMAGE_BASE64);
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index++) {
+        bytes[index] = binary.charCodeAt(index);
+      }
+      const decoded = await createImageBitmap(
+        new Blob([bytes], { type: "image/png" }),
+        {
+          imageOrientation: "flipY",
+          premultiplyAlpha: "none",
+          colorSpaceConversion: "none",
+        }
+      );
+      // ImageBitmap decoding is not abortable. A late result still belongs to
+      // this preview and must be released without reviving a closed worker.
+      if (stopped) {
+        decoded.close();
+        return;
+      }
+      bitmap = decoded;
+      if (
+        bitmap.width !== ATLAS_SIZE[0] ||
+        bitmap.height !== ATLAS_SIZE[1] ||
+        Math.max(bitmap.width, bitmap.height) >
+          renderer.capabilities.maxTextureSize
+      ) {
+        fail("configuration");
+        return;
+      }
+      texture = new Texture(bitmap);
+      texture.colorSpace = SRGBColorSpace;
+      texture.magFilter = NearestFilter;
+      texture.minFilter = NearestFilter;
+      texture.generateMipmaps = false;
+      // ImageBitmap was already flipped during decoding; WebGL ignores flipY
+      // for bitmap sources. The worker's UVs use the normal bottom-up origin.
+      texture.flipY = false;
+      texture.needsUpdate = true;
+      material.map = texture;
+      material.needsUpdate = true;
+      worker.postMessage({ type: "load", buffer }, [buffer]);
+    } catch {
+      fail("configuration");
+    }
   }
 
   function render() {
@@ -256,8 +322,8 @@ export function create({
         }
       }
     });
-    scene.add(new AmbientLight(0xffffff, 2));
-    const sunlight = new DirectionalLight(0xffffff, 2.2);
+    scene.add(new AmbientLight(0xffffff, 0.9));
+    const sunlight = new DirectionalLight(0xffffff, 0.7);
     sunlight.position.set(-3, 8, 5);
     scene.add(sunlight);
     resizeObserver = new ResizeObserver(resize);
@@ -312,6 +378,7 @@ export function create({
         );
         geometry.setAttribute("normal", new BufferAttribute(data.normals, 3));
         geometry.setAttribute("color", new BufferAttribute(data.colors, 3));
+        geometry.setAttribute("uv", new BufferAttribute(data.uvs, 2));
         // The worker rebases coordinates before Float32 conversion, including large offsets.
         if (!box) {
           box = new Box3(
@@ -380,7 +447,7 @@ export function create({
         fail("viewer");
       }
     };
-    worker.postMessage({ type: "load", buffer }, [buffer]);
+    loadTextureAndStart();
   } catch {
     fail(renderer ? "viewer" : "graphics");
   }

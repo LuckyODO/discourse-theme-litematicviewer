@@ -2,6 +2,7 @@
 import { expect, test } from "@playwright/test";
 import { mkdir } from "node:fs/promises";
 import { gzipSync } from "node:zlib";
+import { PNG } from "pngjs";
 
 const externalRequests = new WeakMap();
 const scriptErrors = new WeakMap();
@@ -148,6 +149,153 @@ test("supports layers, material counts, zoom, and reset", async ({ page }) => {
     "aria-busy",
     "true"
   );
+  await expectReady(page);
+});
+
+test("renders the bundled texture pixels on the actual mesh", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const decode = window.createImageBitmap.bind(window);
+    window.createImageBitmap = async (...args) => {
+      const bitmap = await decode(...args);
+      if (!window.useWhiteAtlas) {
+        return bitmap;
+      }
+      const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+      bitmap.close();
+      const context = canvas.getContext("2d");
+      context.fillStyle = "white";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      return decode(canvas);
+    };
+  });
+  await page.goto("/");
+  await openPreview(page);
+  await expectReady(page);
+  const textured = PNG.sync.read(
+    await page.locator(".litematic-canvas canvas").screenshot()
+  );
+  await page.getByRole("button", { name: "关闭预览" }).click();
+  await page.evaluate(() => (window.useWhiteAtlas = true));
+  await openPreview(page);
+  await expectReady(page);
+  const untextured = PNG.sync.read(
+    await page.locator(".litematic-canvas canvas").screenshot()
+  );
+  expect([untextured.width, untextured.height]).toEqual([
+    textured.width,
+    textured.height,
+  ]);
+  let changed = 0;
+  for (let index = 0; index < textured.data.length; index += 4) {
+    if (
+      Math.abs(textured.data[index] - untextured.data[index]) +
+        Math.abs(textured.data[index + 1] - untextured.data[index + 1]) +
+        Math.abs(textured.data[index + 2] - untextured.data[index + 2]) >
+      60
+    ) {
+      changed++;
+    }
+  }
+  expect(changed).toBeGreaterThan(1000);
+});
+
+test("renders embedded textures with CSP denying all image URLs", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    window.cspViolations = [];
+    document.addEventListener("securitypolicyviolation", (event) => {
+      window.cspViolations.push(event.violatedDirective);
+    });
+  });
+  await page.route("http://localhost:4173/", async (route) => {
+    const response = await route.fetch();
+    await route.fulfill({
+      response,
+      headers: {
+        ...response.headers(),
+        "Content-Security-Policy":
+          "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; worker-src 'self'; connect-src 'self'; img-src 'none'",
+      },
+    });
+  });
+  await page.goto("/");
+  await openPreview(page);
+  await expectReady(page);
+  expect(await page.evaluate(() => window.cspViolations)).toEqual([]);
+});
+
+test("releases an atlas decoded after closing and loads a fresh one on reopen", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const decode = window.createImageBitmap.bind(window);
+    window.atlasTraffic = { created: 0, closed: 0 };
+    window.createImageBitmap = async (...args) => {
+      const bitmap = await decode(...args);
+      window.atlasTraffic.created++;
+      const close = bitmap.close.bind(bitmap);
+      bitmap.close = () => {
+        window.atlasTraffic.closed++;
+        close();
+      };
+      if (window.atlasTraffic.created === 1) {
+        await new Promise((resolve) => (window.releaseAtlas = resolve));
+      }
+      return bitmap;
+    };
+  });
+  await page.goto("/");
+  await openPreview(page);
+  await expect
+    .poll(() => page.evaluate(() => window.atlasTraffic.created))
+    .toBe(1);
+  await expect(page.locator("dialog")).toHaveAttribute("data-state", "loading");
+  await page.getByRole("button", { name: "关闭预览" }).click();
+  await page.evaluate(() => window.releaseAtlas());
+  await expect
+    .poll(() => page.evaluate(() => window.atlasTraffic.closed))
+    .toBe(1);
+  await expect(page.locator(".litematic-viewer, canvas")).toHaveCount(0);
+  expect(
+    await page.evaluate(() =>
+      window.previewEvents.some((event) => event.state === "ready")
+    )
+  ).toBe(false);
+  await openPreview(page);
+  await expectReady(page);
+  await page.getByRole("button", { name: "关闭预览" }).click();
+  expect(await page.evaluate(() => window.atlasTraffic)).toEqual({
+    created: 2,
+    closed: 2,
+  });
+});
+
+test("keeps download and retry available when bundled texture decoding fails", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const decode = window.createImageBitmap.bind(window);
+    window.failAtlasDecode = true;
+    window.createImageBitmap = (...args) => {
+      if (window.failAtlasDecode) {
+        return Promise.reject(new Error("Simulated image decode failure"));
+      }
+      return decode(...args);
+    };
+  });
+  await page.goto("/");
+  await openPreview(page);
+  await expect(page.locator("dialog")).toHaveAttribute(
+    "data-error",
+    "configuration"
+  );
+  await expect(page.locator(".litematic-viewer, canvas")).toHaveCount(0);
+  await expect(page.locator(".litematic-preview__download")).toBeVisible();
+  await page.evaluate(() => (window.failAtlasDecode = false));
+  await page.getByRole("button", { name: "重试" }).click();
   await expectReady(page);
 });
 

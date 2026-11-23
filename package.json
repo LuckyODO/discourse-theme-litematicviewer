@@ -13,6 +13,7 @@
     "jsdom": "26.1.0",
     "lint-to-the-future": "^3.2.0",
     "lint-to-the-future-eslint": "^4.0.0",
+    "pngjs": "7.0.0",
     "prettier": "3.8.1",
     "sass": "^1.108.2",
     "stylelint": "17.5.0",
