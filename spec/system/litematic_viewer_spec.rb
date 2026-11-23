@@ -7,6 +7,39 @@ require "tempfile"
 # The theme CI container has no GPU. Keep Discourse's normal driver options and
 # network restrictions, but use a separate software-WebGL browser for this group.
 module LitematicWebGLSystemDriver
+  def self.chromium_directory
+    @chromium_directory ||=
+      begin
+        stdout, stderr, status =
+          Open3.capture3(
+            "node",
+            "-p",
+            "require('playwright').chromium.executablePath()",
+            chdir: Rails.root.to_s,
+          )
+        executable = stdout.strip
+        unless status.success? && File.file?(executable)
+          raise "Could not locate Playwright Chromium: #{stderr}"
+        end
+        directory = File.dirname(executable)
+        unless File.file?(File.join(directory, "libvulkan.so.1"))
+          raise "Playwright Chromium has no bundled Vulkan loader: #{directory}"
+        end
+        directory
+      end
+  end
+
+  def self.browser_environment(existing = {})
+    environment = ENV.to_h.merge(existing)
+    if RUBY_PLATFORM.include?("linux")
+      environment["LD_LIBRARY_PATH"] = [
+        chromium_directory,
+        environment["LD_LIBRARY_PATH"],
+      ].compact.join(File::PATH_SEPARATOR)
+    end
+    environment
+  end
+
   def driver_for(example)
     driver = super
     example.metadata[:litematic_webgl] ? :"#{driver}_litematic_webgl" : driver
@@ -24,10 +57,10 @@ module LitematicWebGLSystemDriver
           --use-gl=angle
           --use-angle=swiftshader
           --enable-unsafe-swiftshader
-          --enable-logging
-          --v=1
         ]
-      options[:args] << "--log-file=/tmp/litematic-chrome-#{Process.pid}.log"
+      # The slim CI container does not expose Chromium's bundled Vulkan loader
+      # through the system dynamic-library search path.
+      options[:env] = LitematicWebGLSystemDriver.browser_environment(options[:env] || {})
     end
     super(name, mobile: mobile, **options)
   end
@@ -78,36 +111,6 @@ RSpec.describe "Litematic attachment previews", litematic_webgl: true do
     )
   end
 
-  def probe_webgl(browser)
-    probe_page = browser.new_page
-    probe_page.evaluate(<<~JS)
-      () => {
-        const probe = (options) => {
-          const canvas = document.createElement("canvas");
-          let error = null;
-          canvas.addEventListener("webglcontextcreationerror", (event) => {
-            error = event.statusMessage;
-          });
-          const gl = canvas.getContext("webgl2", options);
-          const debug = gl?.getExtension("WEBGL_debug_renderer_info");
-          const result = {
-            available: Boolean(gl),
-            error,
-            renderer: debug ? gl.getParameter(debug.UNMASKED_RENDERER_WEBGL) : null,
-          };
-          gl?.getExtension("WEBGL_lose_context")?.loseContext();
-          return result;
-        };
-        return {
-          viewerOptions: probe({ antialias: true, alpha: false, powerPreference: "low-power" }),
-          defaultOptions: probe({}),
-        };
-      }
-    JS
-  ensure
-    probe_page&.close
-  end
-
   def diagnostic_entry(diagnostics, name)
     diagnostics[name] = yield
   rescue StandardError => error
@@ -155,58 +158,26 @@ RSpec.describe "Litematic attachment previews", litematic_webgl: true do
     diagnostics = { driver: Capybara.current_driver }
     page.driver.with_playwright_page do |browser_page|
       browser = browser_page.context.browser
-      diagnostic_entry(diagnostics, :version) { browser.version }
-      diagnostic_entry(diagnostics, :current_browser) { probe_webgl(browser) }
-      diagnostic_entry(diagnostics, :gpu) do
-        browser_diagnostic(browser, "SystemInfo.getInfo")["gpu"].slice(
-          "devices",
-          "featureStatus",
-          "auxAttributes",
-        )
-      end
       diagnostic_entry(diagnostics, :arguments) do
         browser_diagnostic(browser, "Browser.getBrowserCommandLine")["arguments"]
       end
       diagnostic_entry(diagnostics, :gpu_page) { gpu_page_diagnostic(browser) }
-      diagnostic_entry(diagnostics, :chrome_log) do
-        File
-          .readlines("/tmp/litematic-chrome-#{Process.pid}.log")
-          .grep(/gpu|egl|vulkan|swiftshader|gl_|\bGL\b|ERROR/i)
-          .first(100)
-          .map(&:strip)
-      end
-      diagnostic_entry(diagnostics, :policies) do
-        Dir
-          .glob(
-            %w[
-              /etc/chromium/policies/{managed,recommended}/*.json
-              /etc/opt/chrome*/policies/{managed,recommended}/*.json
-            ],
-          )
-          .first(10)
-          .to_h do |path|
-            policies = JSON.parse(File.read(path))
-            [
-              path,
-              policies.select { |key, _| key.match?(/GPU|3D|HardwareAcceleration|SwiftShader/i) },
-            ]
+      if RUBY_PLATFORM.include?("linux")
+        diagnostic_entry(diagnostics, :vulkan_loaders) do
+          environment = LitematicWebGLSystemDriver.browser_environment
+          directory = LitematicWebGLSystemDriver.chromium_directory
+          [File.join(directory, "libvulkan.so.1"), "libvulkan.so.1"].to_h do |path|
+            stdout, stderr, status =
+              Open3.capture3(
+                environment,
+                RbConfig.ruby,
+                "-rfiddle",
+                "-e",
+                'Fiddle.dlopen(ARGV.fetch(0)); puts "loaded"',
+                path,
+              )
+            [path, { status: status.exitstatus, output: (stdout + stderr).lines.first(10) }]
           end
-      end
-      diagnostic_entry(diagnostics, :platform) do
-        { os: File.read("/etc/os-release"), kernel: Open3.capture3("uname", "-a").first.strip }
-      end
-      diagnostic_entry(diagnostics, :libraries) do
-        directory = File.dirname(diagnostics.fetch(:arguments).first)
-        %w[libEGL.so libGLESv2.so libvk_swiftshader.so libvulkan.so.1].to_h do |name|
-          path = File.join(directory, name)
-          info = { exists: File.file?(path) }
-          if info[:exists]
-            info[:bytes] = File.size(path)
-            stdout, stderr, status = Open3.capture3("ldd", path)
-            info[:ldd] = (stdout + stderr).lines.first(20).map(&:strip)
-            info[:status] = status.exitstatus
-          end
-          [name, info]
         end
       end
     end
