@@ -126,11 +126,12 @@ RSpec.describe "Litematic attachment previews", litematic_webgl: true do
           end
       end
     end
+    diagnostics
   rescue Playwright::Error => error
     diagnostics[:probe_error] = error.message
+    diagnostics
   ensure
-    lines = (RSpec.current_example.metadata[:extra_failure_lines] ||= +"")
-    lines << "\nLitematic WebGL diagnostics:\n#{JSON.pretty_generate(diagnostics)}\n"
+    warn "Litematic WebGL diagnostics:\n#{JSON.pretty_generate(diagnostics)}"
   end
 
   before do
@@ -187,7 +188,7 @@ RSpec.describe "Litematic attachment previews", litematic_webgl: true do
   end
 
   it "renders the stored attachment locally and releases the preview on close" do
-    record_webgl_diagnostics
+    diagnostics = record_webgl_diagnostics
     visit post.topic.url
     find(".litematic-attachment__preview").click
 
@@ -196,7 +197,10 @@ RSpec.describe "Litematic attachment previews", litematic_webgl: true do
       ".litematic-preview-modal .d-modal__title-text",
       text: schematic.original_filename,
     )
-    expect(page).to have_css(".litematic-model-summary", text: /1.*1 × 1 × 1/, wait: 20)
+    expect(page).to(
+      have_css(".litematic-model-summary", text: /1.*1 × 1 × 1/, wait: 20),
+      "Preview did not render. WebGL diagnostics:\n#{JSON.pretty_generate(diagnostics)}",
+    )
     expect(page).to have_no_css(".litematic-preview__status")
     expect(page).to have_css(".litematic-preview__stage canvas", count: 1)
     expect(page).to have_css(".litematic-layer")
