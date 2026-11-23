@@ -68,6 +68,71 @@ RSpec.describe "Litematic attachment previews", litematic_webgl: true do
     )
   end
 
+  def probe_webgl(browser)
+    probe_page = browser.new_page
+    probe_page.evaluate(<<~JS)
+      () => {
+        const probe = (options) => {
+          const canvas = document.createElement("canvas");
+          let error = null;
+          canvas.addEventListener("webglcontextcreationerror", (event) => {
+            error = event.statusMessage;
+          });
+          const gl = canvas.getContext("webgl2", options);
+          const debug = gl?.getExtension("WEBGL_debug_renderer_info");
+          const result = {
+            available: Boolean(gl),
+            error,
+            renderer: debug ? gl.getParameter(debug.UNMASKED_RENDERER_WEBGL) : null,
+          };
+          gl?.getExtension("WEBGL_lose_context")?.loseContext();
+          return result;
+        };
+        return {
+          viewerOptions: probe({ antialias: true, alpha: false, powerPreference: "low-power" }),
+          defaultOptions: probe({}),
+        };
+      }
+    JS
+  ensure
+    probe_page&.close
+  end
+
+  def record_webgl_diagnostics
+    diagnostics = { driver: Capybara.current_driver }
+    page.driver.with_playwright_page do |browser_page|
+      browser = browser_page.context.browser
+      cdp = browser.new_browser_cdp_session
+      diagnostics[:version] = browser.version
+      diagnostics[:arguments] = cdp.send_message("Browser.getBrowserCommandLine")["arguments"]
+      gpu = cdp.send_message("SystemInfo.getInfo")["gpu"]
+      diagnostics[:gpu] = gpu.slice("devices", "featureStatus", "auxAttributes")
+      cdp.detach
+      diagnostics[:current_browser] = probe_webgl(browser)
+      {
+        minimal: %w[--no-sandbox --enable-webgl --enable-unsafe-swiftshader],
+        swiftshader_webgl: %w[
+          --no-sandbox
+          --enable-webgl
+          --use-gl=angle
+          --use-angle=swiftshader-webgl
+          --enable-unsafe-swiftshader
+        ],
+      }.each do |name, arguments|
+        browser
+          .browser_type
+          .launch(channel: "chromium", headless: true, args: arguments, timeout: 15_000) do |probe|
+            diagnostics[name] = probe_webgl(probe)
+          end
+      end
+    end
+  rescue Playwright::Error => error
+    diagnostics[:probe_error] = error.message
+  ensure
+    lines = (RSpec.current_example.metadata[:extra_failure_lines] ||= +"")
+    lines << "\nLitematic WebGL diagnostics:\n#{JSON.pretty_generate(diagnostics)}\n"
+  end
+
   before do
     SiteSetting.authorized_extensions = "#{SiteSetting.authorized_extensions}|litematic|pdf"
     @theme = upload_theme_or_component
@@ -122,6 +187,7 @@ RSpec.describe "Litematic attachment previews", litematic_webgl: true do
   end
 
   it "renders the stored attachment locally and releases the preview on close" do
+    record_webgl_diagnostics
     visit post.topic.url
     find(".litematic-attachment__preview").click
 
