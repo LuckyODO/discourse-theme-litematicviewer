@@ -169,15 +169,16 @@ RSpec.describe "Litematic attachment previews", litematic_webgl: true do
           environment = LitematicWebGLSystemDriver.browser_environment
           directory = LitematicWebGLSystemDriver.chromium_directory
           [File.join(directory, "libvulkan.so.1"), "libvulkan.so.1"].to_h do |path|
-            stdout, stderr, status =
-              Open3.capture3(
-                environment,
-                RbConfig.ruby,
-                "-rfiddle",
-                "-e",
-                'Fiddle.dlopen(ARGV.fetch(0)); puts "loaded"',
-                path,
-              )
+            stdout, stderr, status = Open3.capture3(environment, "node", "-e", <<~JS, path)
+                  try {
+                    process.dlopen({ exports: {} }, process.argv[1], require("node:os").constants.dlopen.RTLD_NOW);
+                    console.log("loaded");
+                  } catch (error) {
+                    const loaded = error.message.includes("Module did not self-register");
+                    console.log(loaded ? "loaded (not a Node addon)" : error.message);
+                    process.exitCode = loaded ? 0 : 1;
+                  }
+                JS
             [path, { status: status.exitstatus, output: (stdout + stderr).lines.first(10) }]
           end
         end
