@@ -16,11 +16,17 @@
 
 内置 **Minecraft Java 26.3 原版方块模型、方块状态与材质**。根据投影中的状态选择原版 JSON 模型，处理楼梯内外角、上下半部、栅栏连接、门的朝向与开关、铁轨转弯等形状；玻璃、染色玻璃和水使用半透明混合。可旋转、缩放、重置视角、按高度切层并查看材料数量。材料列表最多显示 200 种，并提示剩余种类数量。
 
-支持 Litematic 格式版本 5–7。预览限制为：解压数据 128 MiB、区域总体积 400 万、可见方块 100 万、区域数 256、每轴跨度 2048 方块、网格面总数 20 万（其中半透明面最多 65,536），以及 8192 种不同的方块状态模型。压缩文件另受下方大小设置与 64 MiB 硬上限约束。
+特殊方块使用内置的原版实体材质和静态模型：单箱、双箱、陷阱箱、末影箱、铜箱、16 色站立与墙上旗帜、潜影盒、原版头颅、饰纹陶罐、钟和潮涌核心。床、告示牌与悬挂告示牌复用 26.3 的原版 JSON 模型。旗帜读取投影中的新旧格式图案（最多 16 层），陶罐读取四侧陶片数据；相同方块状态下的不同装饰分别保留。
+
+附魔台包含静态展开的书本；末地传送门和末地折跃门使用原版星点纹理的静态表面，不模拟游戏内动态着色、视差或光束。
+
+点击 **材料（种类数）** 打开可滚动面板，查看整个投影各方块的数量。统计不随切层变化，按投影中的方块格数计算，不包含箱子库存，也不是生存模式所需物品的换算清单。材料面板独立于 Discourse 的折叠内容样式；按 Esc 先收起面板，再次按下关闭预览。
+
+支持 Litematic 格式版本 5–7。预览限制为：解压数据 128 MiB、区域总体积 400 万、可见方块 100 万、区域数 256、每轴跨度 2048 方块、方块实体数据 65,536 条、网格面总数 20 万（其中半透明面最多 65,536），以及 8192 种不同模型变体（含装饰）。压缩文件另受下方大小设置与 64 MiB 硬上限约束。
 
 这是静态结构预览：动画材质仅使用首帧，草、树叶和水等使用固定染色，不还原游戏光照或生物群系颜色。流体表面按液位、相邻方块和含水状态生成，保留水源、流动及下落状态的形状，但不模拟流动或播放动画。半透明面随视角排序；相交透明面等复杂遮挡可能与游戏效果不同。
 
-JSON 模型不包含完整游戏渲染逻辑。仍需专用渲染器的方块、无法识别的模组或未知方块使用近似后备模型，界面会显示其方块数量；不显示实体。模型与材质固定为 26.3 版，不保证还原其他游戏版本的全部状态。需要完整游戏效果或游戏内放置时，请下载原文件并使用 Litematica。
+特殊模型保持静止：箱盖关闭、旗帜不摆动、潜影盒不展开、潮涌核心使用未激活形态。告示牌显示原版形状但不显示文字；玩家头颅使用内置默认皮肤，不访问皮肤服务器。无法识别的模组或未覆盖方块使用近似后备模型，界面会显示其方块数量；不显示生物等实体。模型与材质固定为 26.3 版，不保证还原其他游戏版本的全部状态。需要完整游戏效果或游戏内放置时，请下载原文件并使用 Litematica。
 
 ## 设置
 
@@ -31,7 +37,7 @@ JSON 模型不包含完整游戏渲染逻辑。仍需专用渲染器的方块、
 | `load_timeout_seconds` | `90`   | 下载、解析和首次渲染的总超时，范围 15–300 秒            |
 | `viewer_theme`         | `auto` | `auto` 跟随当前论坛主题，或指定 `light` / `dark`        |
 
-界面提供简体中文和英文。2.2 版内置原版模型与材质图集，无需填写查看器或材质包地址。
+界面提供简体中文和英文。2.3 版内置原版普通与特殊方块模型、材质图集，无需填写查看器或材质包地址。
 
 ## 性能与附件权限
 
@@ -40,6 +46,7 @@ JSON 模型不包含完整游戏渲染逻辑。仍需专用渲染器的方块、
 - 解析在独立 worker 中完成；关闭或替换弹窗、离开当前主题、超时或失败时，取消下载并释放 worker、画布、纹理及图像解码资源。
 - 绘制按交互更新，限制像素密度和模型复杂度，避免持续占用 GPU。
 - 不透明面与半透明面分别批量绘制，视角变化时只更新半透明面的排序，不为每个玻璃或水方块创建单独绘制对象。
+- 特殊方块与旗帜图案也合并进同一网格，不按方块创建独立 Mesh；相同外观复用有上限的模型缓存。方块实体只读取渲染所需的装饰字段，跳过库存、皮肤 URL 等无关数据。
 - 下载过程中检查累计字节数；解压数据、投影体积、方块数和生成网格分别设有上限。超过上限时显示错误，保留下载入口。
 - 保留原始附件节点和权限 URL，兼容 Discourse 短链接解析、无限滚动和帖子重新渲染。同源附件按当前访客权限读取；跨域存储需要允许论坛来源的 CORS 响应。
 - 不写入 localStorage/IndexedDB，也不保留已关闭模型的解析结果。文件的 HTTP 缓存遵循论坛或对象存储的响应头。
@@ -75,6 +82,8 @@ pnpm test:browser
 
 单元测试覆盖附件识别、解析限制、模型状态、网格生成、透明面排序、下载限额、超时和资源清理。独立浏览器测试在桌面和移动视口中强制执行真实 WebGL 渲染、像素和交互检查，不因缺少 WebGL 而跳过。浏览器测试页面添加 `?showcase=1` 可加载包含楼梯、连接栅栏、门、铁轨、多层玻璃、水池及含水台阶的合成投影。
 
+添加 `?special=1` 可查看箱子、旗帜图案、潜影盒、床、头颅、陶罐等特殊方块的合成投影。回归测试比较有无旗帜图案的实际画面，校验相机能容纳超出方块边界的模型，并在 Discourse 折叠样式下验证材料列表可读、滚动和键盘行为。
+
 `spec/system/litematic_viewer_spec.rb` 在 Discourse 官方主题 CI 中使用实际存储的 gzip 附件，验证帖子增强、按需加载、原生弹窗、关闭与重开、失败下载和停用行为，并在论坛 CSP 下强制运行真实同源 worker 的解析与网格生成。弹窗测试在加载渲染库前独立检测浏览器 WebGL2 能力：支持时必须成功渲染；不支持时必须显示明确错误并保留下载、关闭和重开功能。官方 CI 容器的图形后端可能只能验证这一降级路径，完整真实渲染仍由上述独立浏览器测试强制验证。
 
 部署到测试论坛后，请再用实际 S3/CDN、私有分类和社区常用投影检查附件读取与模型兼容性。
@@ -87,9 +96,10 @@ pnpm test:browser
 - [Discourse Mermaid 组件的按需资源加载](https://github.com/discourse/discourse-mermaid-theme-component)
 - [Discourse Graphviz 组件的同源 worker](https://github.com/discourse/discourse-graphviz-theme-component)
 - [Three.js](https://github.com/mrdoob/three.js)
+- [deepslate 特殊模型几何与 UV 参考（MIT）](https://github.com/misode/deepslate/blob/main/src/render/SpecialRenderer.ts)，适配部分保留完整许可声明。
 
 ## English
 
 A self-contained Discourse theme component that adds **3D preview** and **Download** controls to uploaded `.litematic` attachments. It loads its bundled renderer, Minecraft Java 26.3 vanilla block models, texture atlas, and parsing worker only when requested, then opens a native Discourse dialog. No public viewer, resource-pack URL, or additional hosting is required. Atlas PNG bytes are embedded in the renderer script and decoded locally.
 
-Add `litematic` to `authorized extensions`, install this repository as a theme component, and attach it to your active themes. Requires Discourse 2026.10.0-latest or newer. Static JSON models follow blockstate properties; glass and water use sorted transparency, and fluid surfaces account for neighboring levels and waterlogging. Animated textures use their first frame, biome colors use fixed tints, and fluids do not simulate or animate. Entities are not included. Blocks requiring special renderers, unknown blocks and unsupported modded blocks use approximate fallback models, with their count shown in the viewer. Original downloads and attachment permissions remain intact. Minecraft textures, models and blockstate resources retain Mojang/Microsoft copyright separately from the code's MIT license.
+Add `litematic` to `authorized extensions`, install this repository as a theme component, and attach it to your active themes. Requires Discourse 2026.10.0-latest or newer. Static JSON models follow blockstate properties; glass and water use sorted transparency, and fluid surfaces account for neighboring levels and waterlogging. Animated textures use their first frame, biome colors use fixed tints, and fluids do not simulate or animate. Version 2.3 also bundles static special models for chests, banners with saved patterns, shulker boxes, vanilla heads, decorated pots, bells and conduits; beds and signs use the original 26.3 JSON geometry. Sign text and remote player skins are not loaded. Chest lids remain closed and moving parts remain static. Unknown or unsupported blocks use approximate fallback models, with their count shown in the viewer. Mobs and other entities are not included. The Materials button opens a scrollable panel showing whole-schematic block counts, independent of layer selection and Discourse details styling. Original downloads and attachment permissions remain intact. Minecraft textures, models and blockstate resources retain Mojang/Microsoft copyright separately from the code's MIT license.

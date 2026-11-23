@@ -36,7 +36,15 @@ const modelLicense = await readFile(
   new URL("../model-source/NOTICE.txt", import.meta.url),
   "utf8"
 );
+const specialSource = await readFile(
+  new URL("../renderer/special-models.mjs", import.meta.url),
+  "utf8"
+);
+const specialLicense = specialSource.match(/^\/\*!([\s\S]*?)\*\//)?.[1];
+if (!specialLicense) {
+  throw new Error("Missing special renderer attribution.");
+}
 await writeFile(
   new URL("../assets/THIRD-PARTY-LICENSES.txt", import.meta.url),
-  `Three.js (including OrbitControls)\n\n${license}\n\nMinecraft texture assets\n\n${textureLicense}\n\nMinecraft model assets\n\n${modelLicense}`
+  `Three.js (including OrbitControls)\n\n${license}\n\nMinecraft texture assets\n\n${textureLicense}\n\nMinecraft model assets\n\n${modelLicense}\n\nSpecial model references (deepslate)\n${specialLicense.trim()}\n`
 );

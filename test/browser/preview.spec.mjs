@@ -4,6 +4,7 @@ import { mkdir } from "node:fs/promises";
 import { gzipSync } from "node:zlib";
 import { PNG } from "pngjs";
 import { MODEL_SHOWCASE_EXPECTED } from "../fixtures/model-showcase.mjs";
+import { createSpecialShowcaseFixture } from "../fixtures/special-showcase.mjs";
 
 const externalRequests = new WeakMap();
 const scriptErrors = new WeakMap();
@@ -33,6 +34,83 @@ test.afterEach(async ({ page }) => {
 async function openPreview(page) {
   await page.locator(".litematic-attachment__preview").click();
 }
+
+test("renders bundled special blocks and saved banner patterns without external requests", async ({
+  page,
+}, testInfo) => {
+  await page.addInitScript(() => {
+    const WorkerClass = window.Worker;
+    window.specialMeshes = [];
+    window.Worker = class extends WorkerClass {
+      constructor(...args) {
+        super(...args);
+        this.addEventListener("message", ({ data }) => {
+          if (data.type === "mesh") {
+            window.specialMeshes.push({
+              fallback: data.fallbackBlockCount,
+              unsupported: data.unsupportedNames,
+              faces: data.faceCount,
+            });
+          }
+        });
+      }
+    };
+  });
+  await page.goto("/?special=1");
+  await openPreview(page);
+  await expect(page.locator("dialog")).toHaveAttribute("data-state", "ready");
+  await expect(page.locator(".litematic-model-summary")).toHaveAttribute(
+    "data-block-count",
+    "230"
+  );
+  const stats = await page.evaluate(() => window.specialMeshes);
+  expect(stats).toHaveLength(1);
+  expect(stats[0].fallback).toBe(0);
+  expect(stats[0].unsupported).toEqual([]);
+  expect(stats[0].faces).toBeGreaterThan(500);
+  const canvas = page.locator(".litematic-canvas canvas");
+  await expect(canvas).toBeVisible();
+  await page.getByRole("button", { name: "放大", exact: true }).click();
+  const decorated = PNG.sync.read(await canvas.screenshot());
+  await mkdir(".impeccable/review", { recursive: true });
+  await page.screenshot({
+    path: `.impeccable/review/special-blocks-${testInfo.project.name}.png`,
+  });
+  await page.keyboard.press("Escape");
+  await page.route("**/uploads/short-url/special", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/octet-stream",
+      body: createSpecialShowcaseFixture({ patterns: false }),
+    })
+  );
+  await openPreview(page);
+  await expect(page.locator("dialog")).toHaveAttribute("data-state", "ready");
+  await page.getByRole("button", { name: "放大", exact: true }).click();
+  const plain = PNG.sync.read(await canvas.screenshot());
+  expect([plain.width, plain.height]).toEqual([
+    decorated.width,
+    decorated.height,
+  ]);
+  let different = 0;
+  for (let index = 0; index < plain.data.length; index += 4) {
+    if (
+      [0, 1, 2].reduce(
+        (sum, channel) =>
+          sum +
+          Math.abs(
+            plain.data[index + channel] - decorated.data[index + channel]
+          ),
+        0
+      ) > 40
+    ) {
+      different++;
+    }
+  }
+  expect(different).toBeGreaterThan(60);
+  await page.keyboard.press("Escape");
+  await expect(page.locator("canvas")).toHaveCount(0);
+});
 
 async function expectReady(page) {
   await expect(page.locator("dialog")).toHaveAttribute("data-state", "ready");
@@ -123,14 +201,14 @@ test("supports layers, material counts, zoom, and reset", async ({ page }) => {
     .poll(async () => (await canvas.screenshot()).equals(initial))
     .toBe(false);
   await page.getByRole("button", { name: "重置视角" }).click();
-  await page.locator(".litematic-materials summary").click();
+  await page.locator(".litematic-materials__toggle").click();
   await expect(page.locator(".litematic-materials__list li")).toHaveCount(5);
   await expect(
     page
       .locator(".litematic-materials__list li")
       .filter({ hasText: "grass_block" })
   ).toHaveText("grass_block81");
-  await page.locator(".litematic-materials summary").click();
+  await page.locator(".litematic-materials__toggle").click();
   const layer = page.getByRole("slider", { name: "分层" });
   await layer.focus();
   await layer.press("Home");

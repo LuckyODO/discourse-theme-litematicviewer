@@ -5,6 +5,12 @@ import {
 import { createViewerSession } from "/javascripts/discourse/lib/litematic-viewer-session.js";
 
 const params = new URLSearchParams(location.search);
+if (params.has("special")) {
+  const attachment = document.querySelector(".cooked a.attachment");
+  attachment.href = "/uploads/short-url/special";
+  attachment.textContent = "特殊方块与旗帜.litematic";
+  attachment.setAttribute("data-orig-filename", "特殊方块与旗帜.litematic");
+}
 if (params.has("showcase")) {
   const attachment = document.querySelector(".cooked a.attachment");
   attachment.href = "/uploads/short-url/showcase";
@@ -82,6 +88,8 @@ function open(item) {
       layer: "分层",
       all_layers: "全部层",
       materials: "材料",
+      materials_scope: "完整投影",
+      materials_empty: "此投影没有方块。",
       more_materials: "种其他方块",
       blocks: "个方块",
       dimensions: "尺寸",

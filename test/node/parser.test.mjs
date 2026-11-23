@@ -114,6 +114,7 @@ function region({
   names = ["minecraft:air", "minecraft:stone"],
   indices = [0, 1],
   properties = {},
+  tileEntities,
 } = {}) {
   return compound({
     Position: vector(position),
@@ -137,6 +138,9 @@ function region({
       })),
     }),
     BlockStates: tag(12, pack(indices, names.length)),
+    ...(tileEntities
+      ? { TileEntities: tag(9, { type: 10, items: tileEntities }) }
+      : {}),
   });
 }
 
@@ -155,6 +159,151 @@ function category(expected) {
   return (error) =>
     error instanceof LitematicError && error.category === expected;
 }
+
+test("retains bounded modern and legacy banner decorations, skipping inventories and URLs", () => {
+  const scene = parseLitematicData(
+    nbt(
+      schematic({
+        main: region({
+          names: ["minecraft:white_banner", "minecraft:red_banner"],
+          indices: [0, 1],
+          tileEntities: [
+            {
+              x: int(0),
+              y: int(0),
+              z: int(0),
+              patterns: tag(9, {
+                type: 10,
+                items: [
+                  {
+                    color: string("red"),
+                    pattern: compound({
+                      asset_id: string("minecraft:stripe_center"),
+                      ignored: string("discard"),
+                    }),
+                  },
+                ],
+              }),
+              Items: tag(9, {
+                type: 10,
+                items: [{ id: string("minecraft:diamond") }],
+              }),
+              profile: compound({
+                url: string("https://example.invalid/skin.png"),
+              }),
+            },
+            {
+              x: int(1),
+              y: int(0),
+              z: int(0),
+              Base: int(14),
+              Patterns: tag(9, {
+                type: 10,
+                items: [{ Color: int(0), Pattern: string("bo") }],
+              }),
+            },
+          ],
+        }),
+      })
+    )
+  );
+  const entities = scene.regions[0].blockEntities;
+  assert.equal(entities.size, 2);
+  assert.equal(
+    entities.get(0).patterns[0].pattern.asset_id,
+    "minecraft:stripe_center"
+  );
+  assert.deepEqual(Object.keys(entities.get(0)), ["patterns"]);
+  assert.deepEqual(Object.keys(entities.get(0).patterns[0].pattern), [
+    "asset_id",
+  ]);
+  assert.equal(entities.get(1).Patterns[0].Color, 0);
+  assert.equal(entities.get(1).Base, 14);
+});
+
+test("block entity positions use region-minimum local coordinates for negative selections", () => {
+  const scene = parseLitematicData(
+    nbt(
+      schematic({
+        main: region({
+          position: [10, 6, 4],
+          size: [-2, 1, 1],
+          names: ["minecraft:decorated_pot"],
+          indices: [0, 0],
+          tileEntities: [
+            {
+              x: int(1),
+              y: int(0),
+              z: int(0),
+              sherds: tag(9, {
+                type: 8,
+                items: [
+                  "minecraft:angler_pottery_sherd",
+                  "minecraft:brick",
+                  "minecraft:brick",
+                  "minecraft:archer_pottery_sherd",
+                ],
+              }),
+            },
+          ],
+        }),
+      })
+    )
+  );
+  assert.deepEqual(scene.regions[0].position, [9, 6, 4]);
+  assert.equal(
+    scene.regions[0].blockEntities.get(1).sherds[0],
+    "minecraft:angler_pottery_sherd"
+  );
+});
+
+test("block entity budgets and decoration types are checked before allocation", () => {
+  const entity = { x: int(0), y: int(0), z: int(0) };
+  const data = (entities) =>
+    nbt(schematic({ main: region({ tileEntities: entities }) }));
+  assert.throws(
+    () => parseLitematicData(data([entity, entity]), { blockEntities: 1 }),
+    category("too_complex")
+  );
+  assert.throws(
+    () =>
+      parseLitematicData(
+        data([
+          {
+            ...entity,
+            patterns: tag(9, {
+              type: 10,
+              items: Array(17).fill({
+                color: string("red"),
+                pattern: string("minecraft:base"),
+              }),
+            }),
+          },
+        ])
+      ),
+    category("too_complex")
+  );
+  assert.throws(
+    () =>
+      parseLitematicData(
+        data([{ ...entity, patterns: tag(9, { type: 8, items: ["bad"] }) }])
+      ),
+    category("invalid")
+  );
+  assert.throws(
+    () =>
+      parseLitematicData(
+        data([
+          { ...entity, sherds: tag(9, { type: 8, items: ["x".repeat(257)] }) },
+        ])
+      ),
+    category("too_complex")
+  );
+  assert.throws(
+    () => parseLitematicData(data([{ ...entity, x: int(2) }])),
+    category("invalid")
+  );
+});
 
 test("gzip Litematic loads typed blocks, metadata and material counts without network", async () => {
   const scene = await parseLitematic(gzipSync(nbt(schematic())));

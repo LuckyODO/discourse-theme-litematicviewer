@@ -25,15 +25,23 @@ THE SOFTWARE.
 
 Minecraft texture assets
 
-Minecraft Java Edition 26.3 block textures
+Minecraft Java Edition 26.3 block, selected entity and end-sky textures
 
 Texture artwork copyright Mojang AB and Microsoft. All rights reserved by the
 respective rights holders. The Minecraft texture assets and their generated
 atlas are separate from this project's MIT-licensed code and Three.js.
 
-Source: official Minecraft Java Edition 26.3 client archive, restricted to
-assets/minecraft/textures/block/*.png and accompanying animation metadata.
+Source: official Minecraft Java Edition 26.3 client archive. Includes block
+texture PNGs and selected entity sheets for chests, banners and their patterns,
+shulker boxes, decorated pots, bells, conduits, built-in mob/player heads,
+the enchanting-table book, the end-portal surface, and the end-sky background,
+with accompanying animation metadata. Exact entity directories and individual
+files are recorded in source.json. Beds and signs use the 26.3 block sheets.
 Original file bytes are preserved as base64 in texture-source/26.3.json.
+Entity/environment files use entity/ and environment/ namespaced keys;
+block filenames retain their original
+paths relative to assets/minecraft/textures/block/. No external player skins
+are fetched or included.
 Client SHA-1: e877b6a07acd633fb3bb475002175cec036e7b87
 Source manifest:
 https://piston-meta.mojang.com/v1/packages/ead839cbccf0ddf013c3f935f2840080b5cb0d26/26.3.json
@@ -67,3 +75,25 @@ https://www.minecraft.net/en-us/usage-guidelines
 
 NOT AN OFFICIAL MINECRAFT PRODUCT. NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR
 MICROSOFT.
+
+
+Special model references (deepslate)
+* Special-model geometry and UV references adapted from deepslate:
+ * https://github.com/misode/deepslate/blob/main/src/render/SpecialRenderer.ts
+ * MIT License — Copyright (c) 2021 Misode
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.

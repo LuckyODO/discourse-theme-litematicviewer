@@ -11,6 +11,7 @@ export const DEFAULT_LIMITS = Object.freeze({
   entries: 2_000_000,
   listEntries: 1_000_000,
   stringBytes: 65_535,
+  blockEntities: 65_536,
 });
 
 export class LitematicError extends Error {
@@ -124,11 +125,33 @@ function selectedField(projection, name, type) {
       Size: [10, "vector"],
       BlockStatePalette: [9, "palette"],
       BlockStates: [12, null],
+      TileEntities: [9, "blockEntities"],
     };
   } else if (projection === "vector") {
     fields = { x: [3, null], y: [3, null], z: [3, null] };
   } else if (projection === "paletteEntry") {
     fields = { Name: [8, null], Properties: [10, "properties"] };
+  } else if (projection === "blockEntity") {
+    fields = {
+      x: [3, null],
+      y: [3, null],
+      z: [3, null],
+      id: [8, null],
+      Base: [3, null],
+      Patterns: [9, "patterns"],
+      patterns: [9, "patterns"],
+      Sherds: [9, "sherds"],
+      sherds: [9, "sherds"],
+    };
+  } else if (projection === "pattern") {
+    fields = {
+      Color: [3, null],
+      Pattern: [8, null],
+      color: [[3, 8], null],
+      pattern: [[8, 10], "patternAsset"],
+    };
+  } else if (projection === "patternAsset") {
+    fields = { asset_id: [8, null] };
   } else if (projection === "regions" || projection === "properties") {
     const expected = projection === "regions" ? 10 : 8;
     if (type !== expected) {
@@ -145,10 +168,21 @@ function selectedField(projection, name, type) {
   if (!expected) {
     return { retain: false, projection: null };
   }
-  if (type !== expected[0]) {
+  if (
+    !(Array.isArray(expected[0])
+      ? expected[0].includes(type)
+      : type === expected[0])
+  ) {
     invalid(`Invalid ${name} tag type.`);
   }
-  return { retain: true, projection: expected[1] };
+  return {
+    retain: true,
+    projection:
+      type === 8 &&
+      ["blockEntity", "pattern", "patternAsset"].includes(projection)
+        ? "decorationString"
+        : expected[1],
+  };
 }
 
 class Reader {
@@ -157,6 +191,7 @@ class Reader {
     this.view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     this.offset = 0;
     this.entries = 0;
+    this.blockEntities = 0;
     this.limits = limits;
   }
 
@@ -223,8 +258,15 @@ class Reader {
         const start = this.take(length);
         return retain ? this.bytes.subarray(start, start + length) : null;
       }
-      case 8:
-        return this.string();
+      case 8: {
+        const value = this.string();
+        if (projection === "decorationString" && value.length > 256) {
+          complex(
+            "Block entity decoration identifier exceeds the preview limit."
+          );
+        }
+        return value;
+      }
       case 9: {
         const childType = this.u8();
         const length = this.length();
@@ -245,6 +287,24 @@ class Reader {
             complex("Block palette exceeds the preview limit.");
           }
         }
+        if (projection === "blockEntities") {
+          if (childType !== 10 && length !== 0) {
+            invalid("Block entities must be a list of compounds.");
+          }
+          this.blockEntities += length;
+          if (this.blockEntities > this.limits.blockEntities) {
+            complex("Block entity count exceeds the preview limit.");
+          }
+        }
+        if (projection === "patterns" || projection === "sherds") {
+          const expectedType = projection === "patterns" ? 10 : 8;
+          if (childType !== expectedType && length !== 0) {
+            invalid("Invalid block entity decoration list.");
+          }
+          if (length > (projection === "patterns" ? 16 : 4)) {
+            complex("Block entity decoration exceeds the preview limit.");
+          }
+        }
         // Every non-end tag needs at least one byte, including empty compounds.
         if (length > this.bytes.length - this.offset) {
           invalid("Truncated NBT list.");
@@ -255,7 +315,12 @@ class Reader {
             childType,
             depth + 1,
             retain,
-            projection === "palette" ? "paletteEntry" : null
+            {
+              palette: "paletteEntry",
+              blockEntities: "blockEntity",
+              patterns: "pattern",
+              sherds: "decorationString",
+            }[projection] || null
           );
           if (retain) {
             list[i] = value;
@@ -445,6 +510,43 @@ function intersects(a, b) {
   );
 }
 
+// Litematica stores tile coordinates relative to the region's minimum corner,
+// including regions whose selection size is negative. Keep only decorations;
+// inventories, URLs, text components and arbitrary entity data are skipped by
+// the streaming NBT projection above, before allocating object trees.
+function readBlockEntities(values, size, blocks, palette) {
+  const result = new Map();
+  for (const value of values || []) {
+    compound(value, "block entity");
+    const coordinates = ["x", "y", "z"].map((axis) =>
+      integer(value[axis], `block entity.${axis}`)
+    );
+    if (
+      coordinates.some(
+        (coordinate, axis) => coordinate < 0 || coordinate >= size[axis]
+      )
+    ) {
+      invalid("Block entity is outside its region.");
+    }
+    const [x, y, z] = coordinates;
+    const index = x + size[0] * (z + size[2] * y);
+    if (isAir(palette[blocks[index]].name)) {
+      continue;
+    }
+    const decoration = Object.fromEntries(
+      Object.entries(value).filter(
+        ([key]) => !["x", "y", "z", "id"].includes(key)
+      )
+    );
+    if (Object.keys(decoration).length) {
+      result.set(index, decoration);
+    } else {
+      result.delete(index);
+    }
+  }
+  return result;
+}
+
 function resolveOverlaps(regions, bounds, limits) {
   const overlaps = regions.some((region, index) =>
     regions.slice(index + 1).some((other) => intersects(region, other))
@@ -551,7 +653,13 @@ function sceneFromNbt(root, limits) {
     }
     const palette = readPalette(value.BlockStatePalette, limits);
     const blocks = readBlocks(value.BlockStates, count, palette.length);
-    return { name, position, size, palette, blocks };
+    const blockEntities = readBlockEntities(
+      value.TileEntities,
+      size,
+      blocks,
+      palette
+    );
+    return { name, position, size, palette, blocks, blockEntities };
   });
   resolveOverlaps(regions, bounds, limits);
   let blockCount = 0;

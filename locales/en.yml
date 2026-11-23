@@ -17,6 +17,8 @@ en:
     layer: "Layer"
     all_layers: "All layers"
     materials: "Materials"
+    materials_scope: "Entire schematic"
+    materials_empty: "No blocks in this schematic."
     more_materials: "more block types"
     blocks: "blocks"
     dimensions: "Dimensions"

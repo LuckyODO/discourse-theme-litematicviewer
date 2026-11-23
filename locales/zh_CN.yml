@@ -17,6 +17,8 @@ zh_CN:
     layer: "分层"
     all_layers: "全部层"
     materials: "材料"
+    materials_scope: "完整投影"
+    materials_empty: "此投影没有方块。"
     more_materials: "种其他方块"
     blocks: "个方块"
     dimensions: "尺寸"

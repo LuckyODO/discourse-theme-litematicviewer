@@ -176,6 +176,7 @@ RSpec.describe "Litematic attachment previews" do
                     translucentFaceCount: data.translucentFaceCount,
                     validUVs: data.uvs.every((value) => Number.isFinite(value) && value >= 0 && value <= 1),
                     texturedUVs: data.uvs.some((value) => value !== data.uvs[0]),
+                    materials: data.materials,
                   });
                 };
                 worker.postMessage({ type: "load", id: 1, buffer }, [buffer]);
@@ -206,6 +207,7 @@ RSpec.describe "Litematic attachment previews" do
       "translucentFaceCount" => 0,
       "validUVs" => true,
       "texturedUVs" => true,
+      "materials" => [{ "name" => "minecraft:stone", "count" => 1 }],
     )
     expect(asset_requests.uniq).to eq([@asset_paths.last])
     expect(download_requests.size).to eq(1)
@@ -229,6 +231,27 @@ RSpec.describe "Litematic attachment previews" do
     expect(external_requests).to be_empty
     expect(download_requests.size).to eq(1)
     if graphics_available
+      material_toggle = find(".litematic-materials__toggle")
+      expect(material_toggle["aria-expanded"]).to eq("false")
+      material_toggle.click
+      expect(material_toggle["aria-expanded"]).to eq("true")
+      within ".litematic-materials__panel" do
+        expect(page).to have_content("Entire schematic")
+        expect(page).to have_css("li", text: "stone1", count: 1)
+      end
+      expect(page.evaluate_script(<<~JS)).to eq(true)
+        (() => {
+          const list = document.querySelector(".litematic-materials__list");
+          const row = list.querySelector("li");
+          const bounds = list.getBoundingClientRect();
+          const rowBounds = row.getBoundingClientRect();
+          return bounds.width > 200 && rowBounds.top >= bounds.top && rowBounds.bottom <= bounds.bottom;
+        })()
+      JS
+      material_toggle.send_keys(:escape)
+      expect(page).to have_no_css(".litematic-materials__panel")
+      expect(page).to have_css(".litematic-preview-modal[role='dialog']")
+      expect(material_toggle["aria-expanded"]).to eq("false")
       find(".litematic-reset").click
       expect(page).to have_css(".litematic-preview__stage canvas", count: 1)
     end

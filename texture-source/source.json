@@ -6,7 +6,6 @@
   "clientUrl": "https://piston-data.mojang.com/v1/objects/e877b6a07acd633fb3bb475002175cec036e7b87/client.jar",
   "clientSha1": "e877b6a07acd633fb3bb475002175cec036e7b87",
   "clientBytes": 41483720,
-  "extractedPath": "assets/minecraft/textures/block/",
   "includedFileTypes": [".png", ".png.mcmeta"],
   "sourceContainer": "26.3.json",
   "sourceContainerFormat": "litematic-texture-source-v1",
@@ -14,5 +13,34 @@
   "terms": [
     "https://www.minecraft.net/en-us/eula",
     "https://www.minecraft.net/en-us/usage-guidelines"
-  ]
+  ],
+  "extractedPaths": ["assets/minecraft/textures/block/"],
+  "includedEntityDirectories": [
+    "banner/",
+    "bell/",
+    "chest/",
+    "conduit/",
+    "decorated_pot/",
+    "shulker/"
+  ],
+  "includedEntityFiles": [
+    "creeper/creeper.png",
+    "enchantment/enchanting_table_book.png",
+    "end_portal/end_portal.png",
+    "enderdragon/dragon.png",
+    "piglin/piglin.png",
+    "player/wide/steve.png",
+    "skeleton/skeleton.png",
+    "skeleton/wither_skeleton.png",
+    "zombie/zombie.png"
+  ],
+  "entitySourcePrefix": "assets/minecraft/textures/entity/",
+  "textureKeys": {
+    "block": "Original path relative to assets/minecraft/textures/block/, without .png.",
+    "entity": "entity/ plus original path relative to assets/minecraft/textures/entity/, without .png.",
+    "environment": "environment/ plus original path relative to assets/minecraft/textures/environment/, without .png."
+  },
+  "sourceFilesSha256": "344c4451d0893cdd5b1076c2ed5f0c4a9578a0fd48a3521d0081042a67f308c8",
+  "includedEnvironmentFiles": ["end_sky.png"],
+  "environmentSourcePrefix": "assets/minecraft/textures/environment/"
 }

@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { compile } from "sass";
 import { createLitematicFixture } from "../test/fixtures/litematic-fixture.mjs";
 import { createModelShowcaseFixture } from "../test/fixtures/model-showcase.mjs";
+import { createSpecialShowcaseFixture } from "../test/fixtures/special-showcase.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const port = Number(process.env.PORT || 4173);
@@ -19,12 +20,15 @@ const server = createServer(async (request, response) => {
     const url = new URL(request.url, `http://localhost:${port}`);
     if (
       url.pathname === "/uploads/short-url/pavilion" ||
-      url.pathname === "/uploads/short-url/showcase"
+      url.pathname === "/uploads/short-url/showcase" ||
+      url.pathname === "/uploads/short-url/special"
     ) {
       const bytes =
-        url.pathname === "/uploads/short-url/showcase"
-          ? createModelShowcaseFixture()
-          : createLitematicFixture();
+        url.pathname === "/uploads/short-url/special"
+          ? createSpecialShowcaseFixture()
+          : url.pathname === "/uploads/short-url/showcase"
+            ? createModelShowcaseFixture()
+            : createLitematicFixture();
       const send = () => {
         response.writeHead(200, {
           "Content-Type": "application/octet-stream",

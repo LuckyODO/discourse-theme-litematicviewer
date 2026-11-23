@@ -124,6 +124,7 @@
   }
 
   &__header {
+    position: relative;
     justify-content: space-between;
     border-bottom: 1px solid var(--primary-low);
   }
@@ -139,7 +140,7 @@
 
   button:focus-visible,
   input:focus-visible,
-  summary:focus-visible,
+  .litematic-materials__list:focus-visible,
   canvas:focus-visible {
     outline: 2px solid var(--tertiary);
     outline-offset: -2px;
@@ -196,26 +197,52 @@
 }
 
 .litematic-materials {
-  summary {
+  &__toggle {
     min-height: 2.75em;
-    padding: 0.625em;
-    cursor: pointer;
+    margin: 0;
+    flex: 0 0 auto;
+
+    &[aria-expanded="true"] {
+      background: var(--primary-low);
+    }
   }
 
-  &__list {
+  &__panel {
     position: absolute;
     z-index: 1;
-    top: 3.5rem;
-    right: 1rem;
+    inset-block-start: 100%;
+    inset-inline-end: 1rem;
+    display: flex;
+    flex-direction: column;
     box-sizing: border-box;
     width: min(24rem, calc(100% - 2rem));
-    max-height: 50%;
-    overflow: auto;
-    margin: 0;
-    padding: 0.75rem;
+    max-height: min(22rem, 35dvh);
+    overflow: hidden;
     border: 1px solid var(--primary-low);
     border-radius: var(--d-border-radius);
     background: var(--secondary);
+
+    &[hidden] {
+      display: none;
+    }
+  }
+
+  &__scope {
+    flex: 0 0 auto;
+    margin: 0;
+    padding: 0.625rem 0.75rem;
+    border-bottom: 1px solid var(--primary-low);
+    color: var(--primary-high);
+    font-size: var(--font-down-1);
+  }
+
+  &__list {
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    margin: 0;
+    padding: 0.5rem 0.75rem;
+    list-style: none;
 
     li {
       display: flex;
@@ -223,6 +250,10 @@
       gap: 1rem;
       padding: 0.25em 0;
       overflow-wrap: anywhere;
+
+      span:first-child {
+        min-width: 0;
+      }
 
       span:last-child {
         flex: 0 0 auto;

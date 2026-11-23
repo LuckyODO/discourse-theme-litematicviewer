@@ -54,6 +54,7 @@ export function encodeLitematicFixture({
   palette,
   size,
   blocks,
+  tileEntities = [],
 }) {
   const text = (value) => {
     const bytes = Buffer.from(value);
@@ -76,6 +77,30 @@ export function encodeLitematicFixture({
       compound([tag(3, "x", int(x)), tag(3, "y", int(y)), tag(3, "z", int(z))])
     );
   const string = (field, value) => tag(8, field, text(value));
+  const encodeFields = (record) =>
+    compound(
+      Object.entries(record).map(([key, value]) => {
+        if (typeof value === "number") {
+          return tag(3, key, int(value));
+        }
+        if (typeof value === "string") {
+          return string(key, value);
+        }
+        if (Array.isArray(value)) {
+          const type = typeof value[0] === "string" ? 8 : 10;
+          return tag(
+            9,
+            key,
+            Buffer.concat([
+              Buffer.from([type]),
+              int(value.length),
+              ...value.map(type === 8 ? text : encodeFields),
+            ])
+          );
+        }
+        return tag(10, key, encodeFields(value));
+      })
+    );
   const bits = Math.max(2, Math.ceil(Math.log2(palette.length)));
   const words = new Array(Math.ceil((blocks.length * bits) / 64)).fill(0n);
   blocks.forEach((block, index) => {
@@ -125,7 +150,15 @@ export function encodeLitematicFixture({
     ),
     tag(12, "BlockStates", Buffer.concat([int(words.length), packed])),
     tag(9, "Entities", Buffer.concat([Buffer.from([10]), int(0)])),
-    tag(9, "TileEntities", Buffer.concat([Buffer.from([10]), int(0)])),
+    tag(
+      9,
+      "TileEntities",
+      Buffer.concat([
+        Buffer.from([10]),
+        int(tileEntities.length),
+        ...tileEntities.map(encodeFields),
+      ])
+    ),
   ]);
   const metadata = compound([
     string("Name", name),

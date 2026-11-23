@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { PNG } from "pngjs";
@@ -137,4 +138,129 @@ test("stone and water preserve source pixels, native size and duplicated two-pix
     pixel(image, white.x, white.y),
     Buffer.from([255, 255, 255, 255])
   );
+});
+
+test("selected entity sheets preserve the original client bytes and full native dimensions", async () => {
+  const { png, metadata } = await builtAtlas();
+  const image = PNG.sync.read(png);
+  const sources = await readTextureSources({ version: "26.3" });
+  // Fingerprints were taken directly from the SHA-1-verified official client,
+  // independently of the source container and atlas builder.
+  const selected = [
+    [
+      "entity/chest/normal",
+      64,
+      64,
+      "ab478534503430192b224ea4d5e1e87b6820198925bb7a7b4bd32f2a8a55c801",
+    ],
+    [
+      "entity/banner/stripe_center",
+      64,
+      64,
+      "4bf8dab0f57cd3d7d4818170289306388d8b68f1d5e075d5fa2f8973ffe65105",
+    ],
+    [
+      "entity/conduit/base",
+      32,
+      16,
+      "52c0370563e72ae9251c3ee28c9a4a02ea193dd961f54f68de13475bdcbb3fe6",
+    ],
+    [
+      "entity/enderdragon/dragon",
+      256,
+      256,
+      "6133c12916bb6e4bfdc35389d52e79763d934bae827de90d66fdce2199f9d2f9",
+    ],
+    [
+      "entity/skeleton/skeleton",
+      64,
+      32,
+      "854dd39acb1d8852db3b9e5d3d2bdc032070e37f421b53661ff48d0c1ddf290a",
+    ],
+    [
+      "entity/enchantment/enchanting_table_book",
+      64,
+      32,
+      "8ea11fb9590b0d6e7858ad20adcc196c832af4466601764d6e290d611b0959a0",
+    ],
+    [
+      "entity/end_portal/end_portal",
+      256,
+      256,
+      "af82f34eea41a02dbb2824425fe9606f6cc629a94a5434395ed2a7cbd608d143",
+    ],
+    [
+      "environment/end_sky",
+      128,
+      128,
+      "4e3ac7408ad60efc9be391172f09436a1bfe2e0c278dab24665d47e7ff75f61e",
+    ],
+  ];
+  for (const [name, width, height, sha256] of selected) {
+    const bytes = sources.get(`${name}.png`);
+    assert.equal(createHash("sha256").update(bytes).digest("hex"), sha256);
+    const source = PNG.sync.read(bytes);
+    const tile = metadata.tiles[name];
+    assert.equal(tile.width, width);
+    assert.equal(tile.height, height);
+    assert.equal(tile.animated, false);
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        assert.deepEqual(
+          pixel(image, tile.x + x, tile.y + y),
+          pixel(source, x, y),
+          `${name}: pixel ${x},${y}`
+        );
+      }
+    }
+    assert.deepEqual(pixel(image, tile.x - 2, tile.y - 2), pixel(source, 0, 0));
+    assert.deepEqual(
+      pixel(image, tile.x + width + 1, tile.y + height + 1),
+      pixel(source, width - 1, height - 1)
+    );
+  }
+});
+
+test("entity pattern alpha and namespaced texture coverage remain available within the atlas memory budget", async () => {
+  const { metadata } = await builtAtlas();
+  assert.ok(metadata.width * metadata.height * 4 <= 8 * 1024 * 1024);
+  for (const name of [
+    "entity/chest/normal_left",
+    "entity/chest/trapped_right",
+    "entity/chest/ender",
+    "entity/chest/copper_oxidized_left",
+    "entity/banner/banner_base",
+    "entity/banner/base",
+    "entity/banner/stripe_center",
+    "entity/banner/creeper",
+    "entity/banner/flow",
+    "entity/shulker/shulker",
+    "entity/shulker/shulker_red",
+    "entity/decorated_pot/decorated_pot_base",
+    "entity/decorated_pot/heart_pottery_pattern",
+    "entity/bell/bell_body",
+    "entity/conduit/closed_eye",
+    "entity/player/wide/steve",
+    "entity/skeleton/wither_skeleton",
+    "entity/zombie/zombie",
+    "entity/piglin/piglin",
+    "oak_sign",
+    "oak_hanging_sign",
+    "red_bed_head_up",
+  ]) {
+    assert.ok(metadata.tiles[name], name);
+  }
+  const pattern = metadata.tiles["entity/banner/stripe_center"];
+  assert.equal(pattern.cutout, true);
+  assert.equal(pattern.translucent, true);
+  assert.equal(metadata.tiles["entity/chest/normal"].translucent, false);
+  assert.equal(metadata.tiles["entity/conduit/wind"].animated, true);
+  const provenance = JSON.parse(
+    await readFile(
+      new URL("../../texture-source/source.json", import.meta.url),
+      "utf8"
+    )
+  );
+  assert.equal(metadata.sourceSha256, provenance.sourceFilesSha256);
+  assert.equal(provenance.sourceContainer, "26.3.json");
 });

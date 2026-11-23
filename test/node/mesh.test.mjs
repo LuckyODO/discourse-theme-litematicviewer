@@ -516,7 +516,7 @@ test("actual multipart fences, door variants and ascending rails avoid approxima
   );
 });
 
-test("unsupported special and modded blocks report a bounded fallback summary", () => {
+test("supported special blocks are excluded from the bounded fallback summary", () => {
   const mesh = buildMesh({
     regions: [
       region({
@@ -526,11 +526,8 @@ test("unsupported special and modded blocks report a bounded fallback summary", 
       }),
     ],
   });
-  assert.equal(mesh.fallbackBlockCount, 2);
-  assert.deepEqual(mesh.unsupportedNames, [
-    "example:machine",
-    "minecraft:chest",
-  ]);
+  assert.equal(mesh.fallbackBlockCount, 1);
+  assert.deepEqual(mesh.unsupportedNames, ["example:machine"]);
   assert.ok(mesh.faceCount > 0);
 });
 

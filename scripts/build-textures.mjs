@@ -208,6 +208,15 @@ export async function buildTextureAtlas({ root = ROOT } = {}) {
     sourceHash.update(bytes);
     sourceHash.update("\0");
   }
+  const sourceDigest = sourceHash.digest("hex");
+  if (
+    provenance.sourceFilesSha256 &&
+    provenance.sourceFilesSha256 !== sourceDigest
+  ) {
+    throw new Error(
+      "Texture source bytes do not match their recorded provenance hash."
+    );
+  }
   const pngFiles = files.filter((filename) => filename.endsWith(".png"));
   if (pngFiles.length === 0 || pngFiles.length > 8192) {
     throw new Error(
@@ -258,7 +267,14 @@ export async function buildTextureAtlas({ root = ROOT } = {}) {
     (a, b) =>
       b.height - a.height || b.width - a.width || compareNames(a.key, b.key)
   );
-  const packed = packFrames(frames, 1024) || packFrames(frames, MAX_DIMENSION);
+  // Entity sheets keep their original non-square dimensions. Pick the smallest
+  // allocation, retaining a narrow atlas on ties instead of forcing 2048².
+  const packed = [1024, MAX_DIMENSION]
+    .map((width) => packFrames(frames, width))
+    .filter(Boolean)
+    .sort(
+      (a, b) => a.width * a.height - b.width * b.height || a.width - b.width
+    )[0];
   if (!packed) {
     throw new Error("Texture atlas exceeds the 2048 × 2048 build limit.");
   }
@@ -283,7 +299,7 @@ export async function buildTextureAtlas({ root = ROOT } = {}) {
     height: packed.height,
     version: provenance.version,
     padding: PADDING,
-    sourceSha256: sourceHash.digest("hex"),
+    sourceSha256: sourceDigest,
     tiles: Object.fromEntries(
       Object.keys(tiles)
         .sort(compareNames)

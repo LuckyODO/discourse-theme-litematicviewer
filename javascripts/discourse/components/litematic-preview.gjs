@@ -4,7 +4,7 @@ import { action } from "@ember/object";
 import { modifier } from "ember-modifier";
 import loadScript from "discourse/lib/load-script";
 import DButton from "discourse/ui-kit/d-button";
-import DModal from "discourse/ui-kit/d-modal";
+import DModal, { CLOSE_INITIATED_BY_ESC } from "discourse/ui-kit/d-modal";
 import { i18n } from "discourse-i18n";
 import { attachmentURL } from "../lib/litematic-attachments.js";
 import { createViewerSession } from "../lib/litematic-viewer-session.js";
@@ -48,6 +48,22 @@ export default class LitematicPreview extends Component {
   }
 
   @action
+  beforeClose({ initiatedBy }) {
+    if (initiatedBy === CLOSE_INITIATED_BY_ESC) {
+      // DModal handles Escape in document capture, before the renderer can.
+      const materials = this.stage?.querySelector(
+        '.litematic-materials__toggle[aria-expanded="true"]'
+      );
+      if (materials) {
+        materials.click();
+        materials.focus();
+        return false;
+      }
+    }
+    return true;
+  }
+
+  @action
   start() {
     this.session?.destroy();
     this.error = null;
@@ -72,6 +88,8 @@ export default class LitematicPreview extends Component {
         "layer",
         "all_layers",
         "materials",
+        "materials_scope",
+        "materials_empty",
         "more_materials",
         "blocks",
         "dimensions",
@@ -106,6 +124,7 @@ export default class LitematicPreview extends Component {
   <template>
     <DModal
       class="litematic-preview-modal"
+      @beforeClose={{this.beforeClose}}
       @closeModal={{@closeModal}}
       @submitOnEnter={{false}}
       @title={{@model.name}}

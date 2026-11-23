@@ -1,6 +1,7 @@
 /* eslint-disable no-bitwise -- Integer hashing gives stable original block color variation. */
 import { blockTextures } from "./block-textures.mjs";
 import { createFluidFaces, fluidState } from "./fluids.mjs";
+import { resolveSpecialModel, specialModelKey } from "./special-models.mjs";
 import {
   resolveVanillaModel,
   vanillaModelSeedPeriod,
@@ -572,7 +573,7 @@ function fallbackQuad(face) {
   };
 }
 
-function compileModel(entry, seed = 0) {
+function compileModel(entry, seed = 0, blockEntity = null) {
   const name = typeof entry === "string" ? entry : entry.name;
   if (name?.startsWith("minecraft:") && AIR.has(name.slice(10))) {
     return null;
@@ -582,7 +583,9 @@ function compileModel(entry, seed = 0) {
   let occlusion = Array.from({ length: 6 }, () => []);
   let fallback = false;
   if (!fluid || fluid.waterlogged) {
-    const resolved = resolveVanillaModel(entry, seed);
+    const resolved =
+      resolveSpecialModel(entry, blockEntity) ||
+      resolveVanillaModel(entry, seed);
     if (resolved?.supported && resolved.faces) {
       faces = resolved.faces;
       occlusion = resolved.occlusion || occlusion;
@@ -809,9 +812,11 @@ export function buildMesh(scene, cutY = Infinity) {
   const regions = scene.regions.map((region) => ({
     ...region,
     models: new Map(),
+    decorations: new Map(),
     max: region.position.map((value, axis) => value + region.size[axis]),
   }));
   let modelCount = 0;
+  let variantCount = 0;
   let compiledFaceCount = 0;
   const compiledStates = new Map();
   const modelFor = (region, index, x, y, z) => {
@@ -848,8 +853,35 @@ export function buildMesh(scene, cutY = Infinity) {
       region.models.set(index, state);
     }
     const seed = state.period === 1 ? 0 : positionHash(x, y, z) % state.period;
-    if (!state.variants.has(seed)) {
-      const model = compileModel(state.entry, seed);
+    let blockEntity;
+    let decoration = "";
+    if (region.blockEntities?.size) {
+      const cell =
+        x -
+        region.position[0] +
+        region.size[0] *
+          (z - region.position[2] + region.size[2] * (y - region.position[1]));
+      blockEntity = region.blockEntities.get(cell);
+      if (blockEntity) {
+        // Neighbor face queries reuse the same canonical decoration key.
+        // The sparse map is bounded by the parser's block-entity budget.
+        decoration = region.decorations.get(cell);
+        if (decoration === undefined) {
+          decoration = specialModelKey(state.entry, blockEntity);
+          region.decorations.set(cell, decoration);
+        }
+      }
+    }
+    const variant = decoration ? `${seed}:${decoration}` : seed;
+    if (!state.variants.has(variant)) {
+      const model = compileModel(state.entry, seed, blockEntity);
+      if (model && ++variantCount > MAX_MESH_MODELS) {
+        const error = new Error(
+          "The schematic has too many decorated model variants to preview."
+        );
+        error.category = "too_complex";
+        throw error;
+      }
       compiledFaceCount += model?.faces.length || 0;
       if (compiledFaceCount > MAX_COMPILED_FACES) {
         const error = new Error(
@@ -858,9 +890,9 @@ export function buildMesh(scene, cutY = Infinity) {
         error.category = "too_complex";
         throw error;
       }
-      state.variants.set(seed, model);
+      state.variants.set(variant, model);
     }
-    return state.variants.get(seed);
+    return state.variants.get(variant);
   };
   // Only region-boundary lookups can cross this short adjacency list. No
   // per-cell map, string keys, or copy of the decoded block volume is needed.

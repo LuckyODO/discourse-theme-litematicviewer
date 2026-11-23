@@ -33,12 +33,15 @@ const DEFAULT_LABELS = {
   layer: "Layer",
   all_layers: "All layers",
   materials: "Materials",
+  materials_scope: "Entire schematic",
+  materials_empty: "No blocks in this schematic.",
   more_materials: "more block types",
   blocks: "blocks",
   dimensions: "Dimensions",
   basic_models: "Vanilla block models and textures",
   fallback_models: "blocks use fallback models",
 };
+let nextMaterialsId = 0;
 
 function element(tag, className, text) {
   const node = document.createElement(tag);
@@ -83,11 +86,30 @@ export function create({
     copy.all_layers
   );
   layerLabel.append(layer, layerValue);
-  const materialDetails = element("details", "litematic-materials");
-  materialDetails.append(element("summary", "", copy.materials));
+  // Discourse's global details styles establish a small positioning context.
+  // Keep the disclosure independent of details and anchor its panel to our header.
+  const materialToggle = element(
+    "button",
+    "btn btn-default litematic-materials__toggle",
+    copy.materials
+  );
+  materialToggle.type = "button";
+  materialToggle.disabled = true;
+  materialToggle.id = `litematic-materials-toggle-${nextMaterialsId}`;
+  const materialPanel = element("section", "litematic-materials__panel");
+  materialPanel.id = `litematic-materials-panel-${nextMaterialsId++}`;
+  materialPanel.hidden = true;
+  materialPanel.setAttribute("aria-labelledby", materialToggle.id);
+  materialToggle.setAttribute("aria-controls", materialPanel.id);
+  materialToggle.setAttribute("aria-expanded", "false");
   const materialList = element("ol", "litematic-materials__list");
-  materialDetails.append(materialList);
-  header.append(summary, materialDetails);
+  materialList.tabIndex = 0;
+  materialList.setAttribute("aria-label", copy.materials);
+  materialPanel.append(
+    element("p", "litematic-materials__scope", copy.materials_scope),
+    materialList
+  );
+  header.append(summary, materialToggle, materialPanel);
   toolbar.append(layerLabel);
   root.append(header, viewport, toolbar, note);
   container.append(root);
@@ -109,6 +131,7 @@ export function create({
   let layerInFlight = false;
   let pendingLayer;
   let box;
+  let framingBox;
   const scene = new Scene();
   const camera = new PerspectiveCamera(42, 1, 0.1, 10000);
   const material = new MeshLambertMaterial({
@@ -130,6 +153,30 @@ export function create({
     target.addEventListener(type, callback, options);
     cleanup.push(() => target.removeEventListener(type, callback, options));
   }
+
+  function setMaterialsOpen(open) {
+    materialPanel.hidden = !open;
+    materialToggle.setAttribute("aria-expanded", String(open));
+  }
+
+  listen(materialToggle, "click", () => setMaterialsOpen(materialPanel.hidden));
+  listen(root, "keydown", (event) => {
+    if (event.key === "Escape" && !materialPanel.hidden) {
+      event.preventDefault();
+      event.stopPropagation();
+      setMaterialsOpen(false);
+      materialToggle.focus();
+    }
+  });
+  listen(root, "pointerdown", (event) => {
+    if (
+      !materialPanel.hidden &&
+      !materialPanel.contains(event.target) &&
+      !materialToggle.contains(event.target)
+    ) {
+      setMaterialsOpen(false);
+    }
+  });
 
   function destroy() {
     if (stopped) {
@@ -253,12 +300,12 @@ export function create({
   }
 
   function reset() {
-    if (!box) {
+    if (!framingBox) {
       return;
     }
-    const size = box.getSize(new Vector3());
+    const size = framingBox.getSize(new Vector3());
     const radius = Math.max(1, size.length() / 2);
-    const center = box.getCenter(new Vector3());
+    const center = framingBox.getCenter(new Vector3());
     const halfFov = (camera.fov * Math.PI) / 360;
     const distance =
       (radius /
@@ -431,6 +478,11 @@ export function create({
             new Vector3(),
             new Vector3(...data.bounds.max).sub(new Vector3(...data.bounds.min))
           );
+          // Some vanilla models extend outside their source voxel (banners,
+          // decorated pots). Freeze the full first mesh's extent for fitting;
+          // layer changes must not move the camera or alter schematic dimensions.
+          geometry.computeBoundingBox();
+          framingBox = box.clone().union(geometry.boundingBox);
         }
         const center = box.getCenter(new Vector3());
         if (mesh) {
@@ -461,9 +513,12 @@ export function create({
           layer.value = layer.max;
           layer.disabled = layer.min === layer.max;
           layer.setAttribute("aria-valuetext", copy.all_layers);
+          materialToggle.textContent = `${copy.materials} (${data.materials.length.toLocaleString()})`;
+          materialToggle.disabled = false;
           // A long material list is scrollable and uses textContent for untrusted block IDs.
           for (const entry of data.materials.slice(0, 200)) {
             const row = element("li", "");
+            row.title = entry.name;
             row.append(
               element("span", "", entry.name.replace(/^minecraft:/, "")),
               element("span", "", entry.count.toLocaleString())
@@ -478,6 +533,9 @@ export function create({
                 `+${data.materials.length - 200} ${copy.more_materials}`
               )
             );
+          }
+          if (!data.materials.length) {
+            materialList.append(element("li", "", copy.materials_empty));
           }
           const gridSize = Math.max(size.x, size.z, 4) * 1.25;
           grid = new GridHelper(
