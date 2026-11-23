@@ -134,7 +134,7 @@ RSpec.describe "Litematic attachment previews" do
       ".litematic-preview-modal .d-modal__title-text",
       text: schematic.original_filename,
     )
-    expect(page).to have_css(".litematic-preview[aria-busy='false']")
+    expect(page).to have_no_css(".litematic-preview__status")
     expect(page).to have_css(".litematic-preview__stage iframe", count: 1)
     within ".litematic-preview-modal" do
       expect(page).to have_link("Download", href: /#{Regexp.escape(schematic.short_path)}\z/)
@@ -157,8 +157,13 @@ RSpec.describe "Litematic attachment previews" do
     ).to eq(true)
 
     find(".litematic-attachment__preview").click
-    expect(page).to have_css(".litematic-preview[aria-busy='false']")
+    expect(page).to have_css(".litematic-preview-modal[role='dialog']")
+    expect(page).to have_no_css(".litematic-preview__status")
     expect(page).to have_css(".litematic-preview__stage iframe", count: 1)
+    within_frame(find(".litematic-preview__stage iframe")) do
+      expect(page).to have_css("#loaded-file", text: schematic.original_filename)
+      expect(page).to have_css("#received-data", text: "#{schematic_bytes.bytesize}:31,139,8")
+    end
     find(".litematic-preview-modal .modal-close").click
     expect(page).to have_no_css(".litematic-viewer-frame", visible: :all)
   end
