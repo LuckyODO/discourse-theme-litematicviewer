@@ -3,7 +3,7 @@
 require "base64"
 
 RSpec.describe "Litematic attachment previews" do
-  fab!(:schematic) do
+  let(:schematic) do
     Fabricate(
       :upload,
       original_filename: "starter-house.litematic",
@@ -12,21 +12,22 @@ RSpec.describe "Litematic attachment previews" do
       height: nil,
     )
   end
-  fab!(:document) do
-    Fabricate(:upload, original_filename: "instructions.pdf", extension: "pdf", width: nil, height: nil)
-  end
-  fab!(:post) do
+  let(:document) do
     Fabricate(
-      :post,
-      raw: <<~MD,
+      :upload,
+      original_filename: "instructions.pdf",
+      extension: "pdf",
+      width: nil,
+      height: nil,
+    )
+  end
+  let(:post) { Fabricate(:post, raw: <<~MD) }
         #{UploadMarkdown.new(schematic).to_markdown}
 
         #{UploadMarkdown.new(document).to_markdown}
 
         [An external schematic](https://example.com/external.litematic)
       MD
-    )
-  end
 
   let(:viewer_requests) { [] }
   let(:download_requests) { [] }
@@ -41,8 +42,7 @@ RSpec.describe "Litematic attachment previews" do
     )
   end
 
-  let(:viewer_html) do
-    <<~HTML
+  let(:viewer_html) { <<~HTML }
       <!doctype html>
       <html lang="en">
         <title>Test schematic viewer</title>
@@ -69,9 +69,9 @@ RSpec.describe "Litematic attachment previews" do
         </body>
       </html>
     HTML
-  end
 
   before do
+    SiteSetting.authorized_extensions = "#{SiteSetting.authorized_extensions}|litematic|pdf"
     @theme = upload_theme_or_component
     @theme.settings[:viewer_url].value = "https://litematic-viewer.test/index.html"
 
@@ -107,7 +107,10 @@ RSpec.describe "Litematic attachment previews" do
       expect(page).to have_link("Download", href: schematic.short_path)
     end
     expect(page).to have_link(document.original_filename, href: document.short_path)
-    expect(page).to have_link("An external schematic", href: "https://example.com/external.litematic")
+    expect(page).to have_link(
+      "An external schematic",
+      href: "https://example.com/external.litematic",
+    )
     expect(page).to have_no_css(".litematic-preview-modal")
     expect(viewer_requests).to be_empty
     expect(download_requests).to be_empty

@@ -42,7 +42,7 @@
 - 帖子无限滚动和重新渲染不会重复添加按钮；保留原始附件节点，使 Discourse 的短链接解析与权限路径继续有效。
 - 下载过程中检查实际累计字节数，即使服务器没有或错误地提供 `Content-Length`，仍会执行大小上限。
 - 检查 gzip 文件头后才传递文件。解压、格式解析、方块数量和渲染内存限制由查看器负责；压缩文件很小也可能包含巨大模型。
-- 不持久缓存附件或解析结果，避免私有内容留存在浏览器存储及多个模型占用内存。
+- 组件不写入 localStorage/IndexedDB，也不保留已关闭模型的解析结果；附件的 HTTP 缓存遵循服务器响应头和浏览器缓存策略。
 - 下载按钮始终独立于查看器，预览失败仍可下载。跨域下载是否强制另存由对象存储的 `Content-Disposition` 决定。
 - 仅识别主题帖子中的上传附件；不改写普通外链、代码块、编辑器草稿或聊天消息。
 
@@ -72,7 +72,7 @@ pnpm test:browser
 
 ## English
 
-A Discourse theme component that turns uploaded `.litematic` attachments into a filename, **3D preview** button, and separate **Download** link. Preview opens in a native Discourse dialog only on demand. The original attachment node and its permission URL are preserved. Downloads are size-limited and cancellable; closing the dialog destroys the isolated iframe and its resources.
+A Discourse theme component that turns uploaded `.litematic` attachments into a filename, **3D preview** button, and separate **Download** link. Preview opens in a native Discourse dialog only on demand. The original attachment node and its permission URL are preserved. Preview downloads are size-limited and cancellable; closing the dialog destroys the isolated iframe and its resources.
 
 Add `litematic` to `authorized extensions`, install this repository as a theme component, and attach it to your active themes. Requires Discourse 2026.10.0-latest or newer. The default renderer is the public LitematicWebViewer service; configure a trusted self-hosted v1-compatible viewer via `viewer_url` if desired. No renderer or Minecraft assets are bundled. Private-file content is processed by the configured viewer in the visitor's browser; credentials and attachment URLs are not passed to it.
 

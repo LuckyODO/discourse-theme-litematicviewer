@@ -28,14 +28,12 @@ export function attachmentName(anchor) {
 
 // Read at click time: Discourse may resolve upload:// links after decoration.
 export function attachmentURL(anchor) {
-  if (anchor.hasAttribute("data-orig-href")) {
+  const href = anchor.getAttribute("href");
+  if (!href?.trim() || anchor.hasAttribute("data-orig-href")) {
     return null;
   }
   try {
-    const url = new URL(
-      anchor.getAttribute("href"),
-      anchor.ownerDocument.baseURI
-    );
+    const url = new URL(href, anchor.ownerDocument.baseURI);
     if (
       !["https:", "http:"].includes(url.protocol) ||
       url.username ||

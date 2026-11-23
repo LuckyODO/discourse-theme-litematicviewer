@@ -116,6 +116,8 @@ test("encoded URL names work and attacker-controlled filenames remain text", () 
 test("invalid or unresolved attachment URLs cannot start a download", () => {
   /* eslint-disable no-script-url -- An intentionally rejected adversarial URL. */
   for (const href of [
+    "",
+    "   ",
     "javascript:alert(1)",
     "data:text/plain,test",
     "/404",
@@ -126,6 +128,12 @@ test("invalid or unresolved attachment URLs cannot start a download", () => {
     anchor.setAttribute("href", href);
     assert.equal(attachmentURL(anchor), null);
   }
+  assert.equal(
+    attachmentURL(
+      fixture('<a class="attachment">a.litematic</a>').querySelector("a")
+    ),
+    null
+  );
 });
 
 test("post scrolling preserves topic identity while navigation changes it", () => {
