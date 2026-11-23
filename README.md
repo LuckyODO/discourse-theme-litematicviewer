@@ -65,7 +65,9 @@ pnpm test:browser
 
 渲染器和解析 worker 的源码由 esbuild 打包为 `assets/litematic-renderer.js` 与 `assets/litematic-worker.js`，通过 `about.json` 注册为主题资源。修改源码后应重新构建并提交产物；运行时不从 npm 或公共 CDN 下载依赖。
 
-单元测试覆盖附件识别、解析限制、下载限额、超时和资源清理。浏览器测试覆盖真实解析、渲染和交互。`spec/system/litematic_viewer_spec.rb` 在 Discourse 官方主题 CI 中使用实际存储的 gzip 附件，以及真实内置渲染器和 worker，验证帖子增强、按需加载、原生弹窗、关闭与重开、失败下载和停用行为。
+单元测试覆盖附件识别、解析限制、下载限额、超时和资源清理。独立浏览器测试在桌面和移动视口中强制执行真实 WebGL 渲染、像素和交互检查，不因缺少 WebGL 而跳过。
+
+`spec/system/litematic_viewer_spec.rb` 在 Discourse 官方主题 CI 中使用实际存储的 gzip 附件，验证帖子增强、按需加载、原生弹窗、关闭与重开、失败下载和停用行为，并在论坛 CSP 下强制运行真实同源 worker 的解析与网格生成。弹窗测试在加载渲染库前独立检测浏览器 WebGL2 能力：支持时必须成功渲染；不支持时必须显示明确错误并保留下载、关闭和重开功能。官方 CI 容器的图形后端可能只能验证这一降级路径，完整真实渲染仍由上述独立浏览器测试强制验证。
 
 部署到测试论坛后，请再用实际 S3/CDN、私有分类和社区常用投影检查附件读取与模型兼容性。
 

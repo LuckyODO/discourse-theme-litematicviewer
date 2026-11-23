@@ -1,76 +1,9 @@
 # frozen_string_literal: true
 
 require "base64"
-require "open3"
 require "tempfile"
 
-# The theme CI container has no GPU. Keep Discourse's normal driver options and
-# network restrictions, but use a separate software-WebGL browser for this group.
-module LitematicWebGLSystemDriver
-  def self.chromium_directory
-    @chromium_directory ||=
-      begin
-        stdout, stderr, status =
-          Open3.capture3(
-            "node",
-            "-p",
-            "require('playwright').chromium.executablePath()",
-            chdir: Rails.root.to_s,
-          )
-        executable = stdout.strip
-        unless status.success? && File.file?(executable)
-          raise "Could not locate Playwright Chromium: #{stderr}"
-        end
-        directory = File.dirname(executable)
-        unless File.file?(File.join(directory, "libvulkan.so.1"))
-          raise "Playwright Chromium has no bundled Vulkan loader: #{directory}"
-        end
-        directory
-      end
-  end
-
-  def self.browser_environment(existing = {})
-    environment = ENV.to_h.merge(existing)
-    if RUBY_PLATFORM.include?("linux")
-      environment["LD_LIBRARY_PATH"] = [
-        chromium_directory,
-        environment["LD_LIBRARY_PATH"],
-      ].compact.join(File::PATH_SEPARATOR)
-    end
-    environment
-  end
-
-  def driver_for(example)
-    driver = super
-    example.metadata[:litematic_webgl] ? :"#{driver}_litematic_webgl" : driver
-  end
-
-  private
-
-  def register_chrome(name, mobile:, **options)
-    if RSpec.current_example&.metadata&.dig(:litematic_webgl)
-      name = :"#{name}_litematic_webgl" unless name.to_s.end_with?("_litematic_webgl")
-      options[:args] = Array(options[:args]) +
-        %w[
-          --enable-automation
-          --enable-webgl
-          --use-gl=angle
-          --use-angle=swiftshader
-          --enable-unsafe-swiftshader
-        ]
-      # The slim CI container does not expose Chromium's bundled Vulkan loader
-      # through the system dynamic-library search path.
-      options[:env] = LitematicWebGLSystemDriver
-        .browser_environment(options[:env] || {})
-        .map { |key, value| { name: key, value: value } }
-    end
-    super(name, mobile: mobile, **options)
-  end
-end
-
-SystemDrivers.singleton_class.prepend(LitematicWebGLSystemDriver)
-
-RSpec.describe "Litematic attachment previews", litematic_webgl: true do
+RSpec.describe "Litematic attachment previews" do
   let(:schematic) do
     Tempfile.create(%w[starter-house .litematic]) do |file|
       file.binmode
@@ -113,83 +46,46 @@ RSpec.describe "Litematic attachment previews", litematic_webgl: true do
     )
   end
 
-  def diagnostic_entry(diagnostics, name)
-    diagnostics[name] = yield
-  rescue StandardError => error
-    diagnostics[name] = { error: "#{error.class}: #{error.message}" }
-  ensure
-    warn "Litematic WebGL #{name}: #{JSON.generate(diagnostics[name])}"
-  end
-
-  def browser_diagnostic(browser, command)
-    cdp = browser.new_browser_cdp_session
-    cdp.send_message(command)
-  ensure
-    cdp&.detach
-  end
-
-  def gpu_page_diagnostic(browser)
-    gpu_page = browser.new_page
-    gpu_page.goto("chrome://gpu", timeout: 10_000)
-    gpu_page.get_by_text("Problems Detected", exact: true).wait_for(timeout: 5000)
-    gpu_page.evaluate(<<~'JS')
-      () => {
-        const collect = (node) => {
-          if (node.nodeType === Node.TEXT_NODE) return node.textContent;
-          if (["SCRIPT", "STYLE"].includes(node.nodeName)) return "";
-          return [...node.childNodes].map(collect).join("\n") +
-            (node.shadowRoot ? collect(node.shadowRoot) : "");
-        };
-        const lines = collect(document.body).split(/\n+/).map((line) => line.trim()).filter(Boolean);
-        const section = (name, count) => {
-          const index = lines.findIndex((line) => line.includes(name));
-          return index >= 0 ? lines.slice(index, index + count) : ["Section unavailable"];
-        };
-        return {
-          problems: section("Problems Detected", 35),
-          logs: section("Log Messages", 40),
-          platform: section("Version Information", 20),
-        };
-      }
+  # Probe the browser before loading the renderer. A renderer failure must never
+  # choose the fallback branch; real rendering remains mandatory when supported.
+  def webgl_available?
+    page.evaluate_script(<<~JS)
+      (() => {
+        const canvas = document.createElement("canvas");
+        const gl = canvas.getContext("webgl2", {
+          antialias: true, alpha: false, powerPreference: "low-power",
+        });
+        const available = Boolean(gl);
+        gl?.getExtension("WEBGL_lose_context")?.loseContext();
+        return available;
+      })()
     JS
-  ensure
-    gpu_page&.close
   end
 
-  def record_webgl_diagnostics
-    diagnostics = { driver: Capybara.current_driver }
-    page.driver.with_playwright_page do |browser_page|
-      browser = browser_page.context.browser
-      diagnostic_entry(diagnostics, :arguments) do
-        browser_diagnostic(browser, "Browser.getBrowserCommandLine")["arguments"]
-      end
-      diagnostic_entry(diagnostics, :gpu_page) { gpu_page_diagnostic(browser) }
-      if RUBY_PLATFORM.include?("linux")
-        diagnostic_entry(diagnostics, :vulkan_loaders) do
-          environment = LitematicWebGLSystemDriver.browser_environment
-          directory = LitematicWebGLSystemDriver.chromium_directory
-          [File.join(directory, "libvulkan.so.1"), "libvulkan.so.1"].to_h do |path|
-            stdout, stderr, status = Open3.capture3(environment, "node", "-e", <<~JS, path)
-                  try {
-                    process.dlopen({ exports: {} }, process.argv[1], require("node:os").constants.dlopen.RTLD_NOW);
-                    console.log("loaded");
-                  } catch (error) {
-                    const loaded = error.message.includes("Module did not self-register");
-                    console.log(loaded ? "loaded (not a Node addon)" : error.message);
-                    process.exitCode = loaded ? 0 : 1;
-                  }
-                JS
-            [path, { status: status.exitstatus, output: (stdout + stderr).lines.first(10) }]
-          end
-        end
-      end
+  def expect_preview_result(graphics_available)
+    if graphics_available
+      expect(page).to have_css(".litematic-model-summary", text: /1.*1 × 1 × 1/, wait: 20)
+      expect(page).to have_no_css(".litematic-preview__status")
+      expect(page).to have_css(".litematic-preview__stage canvas", count: 1)
+      expect(page).to have_css(".litematic-layer")
+      expect(page).to have_button("Reset view")
+      expect(find(".litematic-model-summary")["data-block-count"]).to eq("1")
+    else
+      expect(page).to have_css(
+        ".litematic-preview-modal [role='alert']",
+        text: "3D graphics are unavailable in this browser.",
+      )
+      expect(page).to have_button("Try again")
+      expect(page).to have_no_css(".litematic-preview__stage canvas", visible: :all)
+      expect(page).to have_no_css(".litematic-model-summary")
     end
-    diagnostics
-  ensure
-    warn "Litematic WebGL diagnostics:\n#{JSON.pretty_generate(diagnostics)}"
+    within ".litematic-preview-modal" do
+      expect(page).to have_link("Download", href: /#{Regexp.escape(schematic.short_path)}\z/)
+    end
   end
 
   before do
+    SiteSetting.content_security_policy = true
     SiteSetting.authorized_extensions = "#{SiteSetting.authorized_extensions}|litematic|pdf"
     @theme = upload_theme_or_component
     @asset_paths =
@@ -242,9 +138,74 @@ RSpec.describe "Litematic attachment previews", litematic_webgl: true do
     expect(download_requests).to be_empty
   end
 
-  it "renders the stored attachment locally and releases the preview on close" do
-    diagnostics = record_webgl_diagnostics
+  it "parses the stored attachment with the same-origin bundled worker under forum CSP" do
     visit post.topic.url
+    expect(page).to have_button("3D preview")
+
+    result = nil
+    page.driver.with_playwright_page do |browser_page|
+      result =
+        browser_page.evaluate(
+          <<~JS,
+          async ({ workerUrl, uploadUrl }) => {
+            if (new URL(workerUrl, location.href).origin !== location.origin) {
+              throw new Error("Worker must come from the forum origin");
+            }
+            const response = await fetch(uploadUrl, {
+              credentials: "same-origin",
+              signal: AbortSignal.timeout(10000),
+            });
+            if (!response.ok) throw new Error("Stored attachment could not be fetched");
+            const buffer = await response.arrayBuffer();
+            const worker = new Worker(workerUrl);
+            let timeout;
+            try {
+              return await new Promise((resolve, reject) => {
+                timeout = setTimeout(() => reject(new Error("Worker timed out")), 10000);
+                worker.onerror = (event) => reject(new Error(event.message || "Worker failed"));
+                worker.onmessageerror = () => reject(new Error("Worker message failed"));
+                worker.onmessage = ({ data }) => {
+                  if (data.type === "error") reject(new Error(data.message));
+                  if (data.type === "mesh") resolve({
+                    blockCount: data.blockCount,
+                    bounds: data.bounds,
+                    faceCount: data.faceCount,
+                    positionCount: data.positions.length,
+                  });
+                };
+                worker.postMessage({ type: "load", id: 1, buffer }, [buffer]);
+              });
+            } finally {
+              clearTimeout(timeout);
+              worker.terminate();
+            }
+          }
+        JS
+          arg: {
+            workerUrl: @asset_paths.last,
+            uploadUrl: schematic.short_path,
+          },
+        )
+    end
+
+    expect(result).to eq(
+      "blockCount" => 1,
+      "bounds" => {
+        "min" => [0, 0, 0],
+        "max" => [1, 1, 1],
+      },
+      "faceCount" => 6,
+      "positionCount" => 108,
+    )
+    expect(asset_requests.uniq).to eq([@asset_paths.last])
+    expect(download_requests.size).to eq(1)
+    expect(external_requests).to be_empty
+    expect(page).to have_no_css(".litematic-preview-modal")
+  end
+
+  it "opens the native preview, handles browser graphics support, and releases it on close" do
+    visit post.topic.url
+    graphics_available = webgl_available?
     find(".litematic-attachment__preview").click
 
     expect(page).to have_css(".litematic-preview-modal[role='dialog']")
@@ -252,23 +213,15 @@ RSpec.describe "Litematic attachment previews", litematic_webgl: true do
       ".litematic-preview-modal .d-modal__title-text",
       text: schematic.original_filename,
     )
-    expect(page).to(
-      have_css(".litematic-model-summary", text: /1.*1 × 1 × 1/, wait: 20),
-      "Preview did not render. WebGL diagnostics:\n#{JSON.pretty_generate(diagnostics)}",
-    )
-    expect(page).to have_no_css(".litematic-preview__status")
-    expect(page).to have_css(".litematic-preview__stage canvas", count: 1)
-    expect(page).to have_css(".litematic-layer")
-    expect(page).to have_button("Reset view")
-    within ".litematic-preview-modal" do
-      expect(page).to have_link("Download", href: /#{Regexp.escape(schematic.short_path)}\z/)
-    end
-    expect(find(".litematic-model-summary")["data-block-count"]).to eq("1")
-    expect(asset_requests.uniq).to match_array(@asset_paths)
+    expect_preview_result(graphics_available)
+    expected_assets = graphics_available ? @asset_paths : [@asset_paths.first]
+    expect(asset_requests.uniq).to match_array(expected_assets)
     expect(external_requests).to be_empty
     expect(download_requests.size).to eq(1)
-    find(".litematic-reset").click
-    expect(page).to have_css(".litematic-preview__stage canvas", count: 1)
+    if graphics_available
+      find(".litematic-reset").click
+      expect(page).to have_css(".litematic-preview__stage canvas", count: 1)
+    end
 
     find(".litematic-preview-modal .modal-close").click
 
@@ -282,12 +235,11 @@ RSpec.describe "Litematic attachment previews", litematic_webgl: true do
 
     find(".litematic-attachment__preview").click
     expect(page).to have_css(".litematic-preview-modal[role='dialog']")
-    expect(page).to have_css(".litematic-model-summary", text: /1.*1 × 1 × 1/, wait: 20)
-    expect(page).to have_no_css(".litematic-preview__status")
-    expect(page).to have_css(".litematic-preview__stage canvas", count: 1)
-    expect(find(".litematic-model-summary")["data-block-count"]).to eq("1")
+    expect_preview_result(graphics_available)
+    expect(download_requests.size).to eq(2)
     expect(external_requests).to be_empty
     find(".litematic-preview-modal .modal-close").click
+    expect(page).to have_no_css(".litematic-preview-modal")
     expect(page).to have_no_css(".litematic-preview__stage canvas", visible: :all)
   end
 
