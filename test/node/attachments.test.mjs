@@ -17,6 +17,75 @@ function fixture(html) {
 
 const labels = { preview: "3D preview", download: "Download" };
 
+test("upload sizes move inside the row without consuming following prose and restore exactly", () => {
+  for (const size of [
+    "1.4 KB",
+    "236 Bytes",
+    "16 B",
+    "1,2\u00a0MB",
+    "2.5 MiB",
+    "236 字节",
+  ]) {
+    const root = fixture(
+      `<p><a class="attachment" href="/a.litematic">a.litematic</a> (${size}) additional instructions<br><a class="attachment" href="/b.litematic">b.litematic</a> (2 KB)</p>`
+    );
+    const originalHTML = root.innerHTML;
+    const anchor = root.querySelector("a");
+    const text = anchor.nextSibling;
+    const cleanup = decorateAttachments(root, { labels, onPreview() {} });
+    const card = root.querySelector(".litematic-attachment");
+    assert.equal(
+      card.querySelector(".litematic-attachment__size").textContent,
+      size
+    );
+    assert.equal(
+      card.querySelector(".litematic-attachment__actions a"),
+      anchor
+    );
+    assert.equal(card.nextSibling, text);
+    assert.equal(text.data, " additional instructions");
+    assert.equal(card.textContent.includes("additional instructions"), false);
+    cleanup();
+    assert.equal(root.innerHTML, originalHTML);
+    assert.equal(anchor.nextSibling, text);
+  }
+});
+
+test("ordinary adjacent prose, elements and metadata for other file types are untouched", () => {
+  const root = fixture(
+    '<a class="attachment" href="/a.litematic">a.litematic</a> (requires version 26.3)<br><a class="attachment" href="/b.litematic">b.litematic</a><em> (2 MB)</em><a class="attachment" href="/c.zip">c.zip</a> (4 KB)'
+  );
+  const originalHTML = root.innerHTML;
+  const cleanup = decorateAttachments(root, { labels, onPreview() {} });
+  assert.equal(root.querySelectorAll(".litematic-attachment__size").length, 0);
+  assert.equal(
+    root.querySelector(".litematic-attachment").nextSibling.data,
+    " (requires version 26.3)"
+  );
+  assert.equal(root.querySelector("em").textContent, " (2 MB)");
+  assert.equal(
+    root.querySelector('a[href="/c.zip"]').nextSibling.data,
+    " (4 KB)"
+  );
+  cleanup();
+  assert.equal(root.innerHTML, originalHTML);
+});
+
+test("normalization and repeated decoration cannot duplicate or lose the original upload size", () => {
+  const root = fixture(
+    '<p><a class="attachment" href="/a.litematic">a.litematic</a> (1.4 KB)<br>Following line</p>'
+  );
+  const originalHTML = root.innerHTML;
+  for (let repeat = 0; repeat < 3; repeat++) {
+    const cleanup = decorateAttachments(root, { labels, onPreview() {} });
+    const redundant = decorateAttachments(root, { labels, onPreview() {} });
+    redundant();
+    root.normalize();
+    cleanup();
+    assert.equal(root.innerHTML, originalHTML);
+  }
+});
+
 test("only uploaded litematic attachments are decorated, including uppercase names", () => {
   const root = fixture(`
     <a class="attachment" href="/uploads/short-url/one">城堡.LITEMATIC</a>

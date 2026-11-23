@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Attachment layout — isolated compatibility fixture</title>
+    <link rel="stylesheet" href="/theme.css" />
+    <style>
+      :root {
+        --primary: #222;
+        --primary-low: #ddd;
+        --primary-high: #555;
+        --primary-medium: #777;
+        --secondary: #fff;
+        --tertiary: #0088cc;
+        --d-border-radius: 4px;
+        --font-down-1: 0.875em;
+        --cooked-line-height: 1.5;
+        font:
+          16px/1.5 system-ui,
+          sans-serif;
+        color: var(--primary);
+        background: #f7f7f7;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 24px 12px;
+      }
+      .post {
+        width: 690px;
+        max-width: 100%;
+        margin: auto;
+      }
+      .fixture-note {
+        color: #666;
+        font-size: 13px;
+        margin: 0 0 16px;
+      }
+      .nested {
+        width: 100%;
+        max-width: 100%;
+      }
+      .cooked {
+        overflow-wrap: break-word;
+        line-height: var(--cooked-line-height);
+      }
+      .cooked a {
+        overflow-wrap: break-word;
+      }
+      .cooked p {
+        margin: 0 0 1em;
+      }
+      a {
+        color: var(--tertiary);
+      }
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        font: inherit;
+        padding: 0.5em 0.65em;
+        cursor: pointer;
+        color: #333;
+        background: #fff;
+      }
+      .btn-primary {
+        background: #0088cc;
+        color: #fff;
+        border-color: #0088cc;
+      }
+      /* Discourse topic-post.scss adds this desktop icon before attachments.
+         Its 14×16 content and 4px margin affect intrinsic button width. */
+      a.attachment::before {
+        display: inline-block;
+        content: "↓";
+        width: 14px;
+        height: 16px;
+        margin-right: 4px;
+        vertical-align: middle;
+      }
+      /* A deliberately separate theme compatibility stressor: trailing marks
+         are not a claim about Discourse core's default attachment styles. */
+      a.attachment::after {
+        content: "↗";
+        display: inline-block;
+        width: 0.7em;
+        margin-left: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="post">
+      <p class="fixture-note">
+        独立附件布局测试：真实组件模块与样式，模拟 Discourse cooked HTML。
+      </p>
+      <article class="nested">
+        <div class="cooked">
+          <!-- prettier-ignore -->
+          <p id="attachments"><a class="attachment" href="/uploads/short-url/layout-0.litematic">单片打包.litematic</a> (1.4 KB)<br>
+<a class="attachment" href="/uploads/short-url/layout-1.litematic">单片打包+盒展.litematic</a> (1.6 KB)<br>
+<a class="attachment" href="/uploads/short-url/layout-2.litematic">单片打包合成器版本.litematic</a> (1.4 KB)<br>
+<a class="attachment" href="/uploads/short-url/layout-3.litematic">刷怪塔收集.litematic</a> (5.6 KB)<br>
+<a class="attachment" href="/uploads/short-url/layout-4.litematic">超长中文文件名_玩家公共建筑计划_全自动分类打包仓库_兼容更新版本_第二部分.litematic</a> (123.4 KB)</p>
+          <p>
+            <a
+              id="ordinary-attachment"
+              class="attachment"
+              href="/uploads/readme.txt"
+              >说明.txt</a
+            >
+            (321 B)
+          </p>
+        </div>
+      </article>
+    </main>
+  </body>
+</html>

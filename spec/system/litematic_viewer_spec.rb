@@ -138,6 +138,73 @@ RSpec.describe "Litematic attachment previews" do
     expect(download_requests).to be_empty
   end
 
+  context "when several uploaded schematics share one paragraph" do
+    let(:display_names) do
+      [
+        "a.litematic",
+        "单片打包合成器版本.litematic",
+        "a_very_long_schematic_filename_#{"without_any_breaks_" * 12}.litematic",
+        "collection.litematic",
+      ]
+    end
+    let(:post) do
+      links =
+        display_names.map { |name| UploadMarkdown.new(schematic).to_markdown(display_name: name) }
+      Fabricate(:post, raw: "Schematics for testing:\n#{links.join("\n")}")
+    end
+
+    [false, true].each do |mobile|
+      it "keeps attachment rows aligned and contained on #{mobile ? "mobile" : "desktop"}",
+         mobile: mobile do
+        cooked = Nokogiri::HTML.fragment(post.cooked)
+        expect(cooked.at_css("p").css("a.attachment").size).to eq(4)
+        expect(cooked.at_css("p").css("br").size).to be >= 3
+        visit post.topic.url
+
+        expect(page).to have_css(".litematic-attachment", count: display_names.size)
+        expect(page).to have_content("Schematics for testing:")
+        all(".litematic-attachment").each_with_index do |row, index|
+          within row do
+            expect(page).to have_css(".litematic-attachment__name", text: display_names[index])
+            expect(page).to have_content(schematic.human_filesize)
+            expect(page).to have_button("3D preview")
+            expect(page).to have_link("Download", href: schematic.short_path)
+            expect(page).to have_css("a.attachment.litematic-attachment__download", count: 1)
+          end
+        end
+
+        layout = page.evaluate_script(<<~JS)
+          (() => {
+            const rows = Array.from(document.querySelectorAll(".litematic-attachment"));
+            const first = rows[0].getBoundingClientRect();
+            return rows.map((row) => {
+              const box = row.getBoundingClientRect();
+              const cookedBox = row.closest(".cooked").getBoundingClientRect();
+              const preview = row.querySelector(".litematic-attachment__preview").getBoundingClientRect();
+              const anchor = row.querySelector("a.attachment");
+              const download = anchor.getBoundingClientRect();
+              const name = row.querySelector(".litematic-attachment__name").getBoundingClientRect();
+              return {
+                aligned: Math.abs(box.left - first.left) < 1 && Math.abs(box.width - first.width) < 1,
+                buttonsTogether: Math.abs(preview.top - download.top) < 1 && preview.right <= download.left + 1,
+                contained: box.left >= cookedBox.left - 1 && box.right <= cookedBox.right + 1 &&
+                  row.scrollWidth <= row.clientWidth + 1 && preview.left >= box.left && download.right <= box.right,
+                nameBesideActions: name.top < preview.bottom && name.bottom > preview.top,
+                box: { left: box.left, width: box.width, height: box.height },
+              };
+            });
+          })()
+        JS
+        layout.each do |row|
+          expect(row).to include("aligned" => true, "buttonsTogether" => true, "contained" => true)
+          expect(row["nameBesideActions"]).to eq(true) unless mobile
+        end
+        expect(asset_requests).to be_empty
+        expect(download_requests).to be_empty
+      end
+    end
+  end
+
   it "parses the stored attachment with the same-origin bundled worker under forum CSP" do
     visit post.topic.url
     expect(page).to have_button("3D preview")

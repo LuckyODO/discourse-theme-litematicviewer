@@ -1,4 +1,8 @@
 const EXTENSION = /\.litematic$/i;
+// Discourse's upload markdown puts the human-readable size in a text node
+// immediately after the link. Consume only that prefix, never surrounding prose.
+const UPLOAD_SIZE =
+  /^[ \t\u00a0\u202f]*\(([0-9][0-9., \u00a0\u202f]*(?:bytes?|(?:[kmgtpe]i?)?b|字节|位元組))\)/i;
 
 function decoded(value) {
   try {
@@ -76,10 +80,27 @@ export function decorateAttachments(element, { labels, onPreview }) {
     const wrapper = doc.createElement("span");
     wrapper.className = "litematic-attachment";
 
+    const info = doc.createElement("span");
+    info.className = "litematic-attachment__info";
+    const actions = doc.createElement("span");
+    actions.className = "litematic-attachment__actions";
+
     const filename = doc.createElement("span");
     filename.className = "litematic-attachment__name";
     filename.textContent = name;
     filename.title = name;
+    info.append(filename);
+
+    const sizeSource = anchor.nextSibling;
+    const sizeMatch =
+      sizeSource?.nodeType === 3 && sizeSource.data.match(UPLOAD_SIZE);
+    if (sizeMatch) {
+      const size = doc.createElement("span");
+      size.className = "litematic-attachment__size";
+      size.textContent = sizeMatch[1].trim();
+      info.append(size);
+      sizeSource.data = sizeSource.data.slice(sizeMatch[0].length);
+    }
 
     const preview = doc.createElement("button");
     preview.type = "button";
@@ -102,7 +123,8 @@ export function decorateAttachments(element, { labels, onPreview }) {
     anchor.setAttribute("aria-label", `${labels.download}: ${name}`);
     anchor.setAttribute("title", name);
     anchor.setAttribute("download", name);
-    wrapper.append(filename, preview, anchor);
+    actions.append(preview, anchor);
+    wrapper.append(info, actions);
 
     restorers.push(() => {
       preview.removeEventListener("click", click);
@@ -116,6 +138,14 @@ export function decorateAttachments(element, { labels, onPreview }) {
       }
       // Do not restore href/data-orig-href: core may have updated them.
       wrapper.replaceWith(anchor);
+      if (sizeMatch) {
+        // Preserve any updates to the remaining text, and restore the original
+        // size node even if a DOM normalization removed its empty remainder.
+        sizeSource.data = sizeMatch[0] + sizeSource.data;
+        if (!sizeSource.parentNode) {
+          anchor.after(sizeSource);
+        }
+      }
     });
   }
 
