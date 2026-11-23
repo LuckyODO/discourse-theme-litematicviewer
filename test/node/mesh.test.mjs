@@ -3,8 +3,10 @@ import test from "node:test";
 import { ATLAS } from "../../renderer/generated/texture-atlas.mjs";
 import {
   buildMesh,
+  MAX_COMPILED_FACES,
   MAX_MESH_FACES,
   MAX_MESH_MODELS,
+  MAX_TRANSLUCENT_FACES,
 } from "../../renderer/mesh.mjs";
 
 function region({
@@ -204,6 +206,39 @@ test("duplicate palette states across regions share the same model budget", () =
   assert.equal(mesh.faceCount, 130 * (65 * 4 + 2));
 });
 
+test("weighted vanilla variants use stable world coordinates across regions and layer cuts", () => {
+  const first = buildMesh({ regions: [region({ position: [0, 0, 0] })] });
+  const next = buildMesh({ regions: [region({ position: [1, 0, 0] })] });
+  assert.notDeepEqual(first.uvs, next.uvs);
+  assert.deepEqual(
+    next.uvs,
+    buildMesh({ regions: [region({ position: [1, 0, 0] })] }).uvs
+  );
+
+  const combined = buildMesh({
+    regions: [
+      region({
+        size: [4, 1, 1],
+        palette: [{ name: "minecraft:stone" }, { name: "minecraft:air" }],
+        blocks: new Uint32Array([1, 0, 1, 0]),
+      }),
+    ],
+  });
+  const separate = buildMesh({
+    regions: [region({ position: [1, 0, 0] }), region({ position: [3, 0, 0] })],
+  });
+  assert.deepEqual(combined.positions, separate.positions);
+  assert.deepEqual(combined.uvs, separate.uvs);
+
+  const scene = {
+    regions: [region({ position: [1, 0, 0] }), region({ position: [1, 2, 0] })],
+  };
+  const all = buildMesh(scene);
+  const cut = buildMesh(scene, 0);
+  assert.deepEqual(cut.uvs, all.uvs.slice(0, cut.uvs.length));
+  assert.deepEqual(cut.positions, all.positions.slice(0, cut.positions.length));
+});
+
 test("slabs respect top, bottom and double block states", () => {
   for (const [type, expected, expectedArea] of [
     ["bottom", [0, 0.5], 4],
@@ -222,20 +257,26 @@ test("slabs respect top, bottom and double block states", () => {
   }
 });
 
-test("stair cuboids form a surface union without internal coplanar faces", () => {
+test("vanilla stair models retain their original faces in every orientation", () => {
   for (const facing of ["north", "east", "south", "west"]) {
     for (const half of ["bottom", "top"]) {
       const mesh = buildMesh({
         regions: [
           region({
             palette: [
-              { name: "minecraft:stone_stairs", properties: { facing, half } },
+              {
+                name: "minecraft:stone_stairs",
+                properties: { facing, half, shape: "straight" },
+              },
             ],
           }),
         ],
       });
-      assert.equal(area(mesh), 5.5);
-      assert.deepEqual(extent(mesh, 1), [0, 1]);
+      assert.equal(mesh.faceCount, 11);
+      assert.equal(mesh.fallbackBlockCount, 0);
+      assert.ok(Math.abs(area(mesh) - 6) < 1e-6);
+      const [bottom, top] = extent(mesh, 1);
+      assert.ok(Math.abs(bottom) < 1e-6 && Math.abs(top - 1) < 1e-6);
     }
   }
 });
@@ -375,7 +416,175 @@ test("glass and leaves preserve opaque neighbor surfaces behind their cutouts", 
         region({ size: [2, 1, 1], palette: [{ name: "minecraft:glass" }] }),
       ],
     }).faceCount,
-    12
+    10
+  );
+});
+
+test("glass joins only the same material and opaque faces precede translucent faces", () => {
+  const colored = buildMesh({
+    regions: [
+      region({
+        size: [2, 1, 1],
+        palette: [
+          { name: "minecraft:red_stained_glass" },
+          { name: "minecraft:blue_stained_glass" },
+        ],
+        blocks: new Uint32Array([0, 1]),
+      }),
+    ],
+  });
+  assert.equal(colored.faceCount, 12);
+  assert.equal(colored.translucentFaceCount, 12);
+  const mixed = buildMesh({
+    regions: [
+      region({ palette: [{ name: "minecraft:glass" }] }),
+      region({ position: [2, 0, 0] }),
+    ],
+  });
+  assert.equal(mixed.opaqueFaceCount, 6);
+  assert.equal(mixed.translucentFaceCount, 6);
+  assert.ok(
+    mixed.positions
+      .slice(0, 6 * 18)
+      .filter((_value, index) => index % 3 === 0)
+      .every((value) => value >= 2)
+  );
+  assert.ok(
+    mixed.positions
+      .slice(6 * 18)
+      .filter((_value, index) => index % 3 === 0)
+      .every((value) => value <= 1)
+  );
+});
+
+test("actual multipart fences, door variants and ascending rails avoid approximate fallback", () => {
+  const meshFor = (name, properties) =>
+    buildMesh({
+      regions: [
+        region({ palette: [{ name: `minecraft:${name}`, properties }] }),
+      ],
+    });
+  const fence = meshFor("oak_fence", {
+    north: "true",
+    east: "true",
+    south: "true",
+    west: "true",
+  });
+  const post = meshFor("oak_fence", {
+    north: "false",
+    east: "false",
+    south: "false",
+    west: "false",
+  });
+  assert.equal(fence.fallbackBlockCount, 0);
+  assert.ok(fence.faceCount > post.faceCount);
+  for (const shape of ["inner_left", "outer_right"]) {
+    const stairs = meshFor("stone_stairs", {
+      facing: "west",
+      half: "top",
+      shape,
+    });
+    assert.equal(stairs.fallbackBlockCount, 0);
+    assert.notDeepEqual(
+      stairs.positions,
+      meshFor("stone_stairs", {
+        facing: "west",
+        half: "top",
+        shape: "straight",
+      }).positions
+    );
+  }
+  const closed = meshFor("oak_door", {
+    facing: "north",
+    half: "upper",
+    hinge: "right",
+    open: "false",
+  });
+  const open = meshFor("oak_door", {
+    facing: "north",
+    half: "upper",
+    hinge: "right",
+    open: "true",
+  });
+  assert.equal(open.fallbackBlockCount, 0);
+  assert.notDeepEqual(open.positions, closed.positions);
+  const rail = meshFor("rail", { shape: "ascending_east" });
+  assert.equal(rail.fallbackBlockCount, 0);
+  assert.ok(extent(rail, 1)[1] - extent(rail, 1)[0] > 0.9);
+  assert.ok(
+    rail.normals.some((value) => Math.abs(value) > 0.5 && Math.abs(value) < 0.9)
+  );
+});
+
+test("unsupported special and modded blocks report a bounded fallback summary", () => {
+  const mesh = buildMesh({
+    regions: [
+      region({
+        size: [2, 1, 1],
+        palette: [{ name: "minecraft:chest" }, { name: "example:machine" }],
+        blocks: new Uint32Array([0, 1]),
+      }),
+    ],
+  });
+  assert.equal(mesh.fallbackBlockCount, 2);
+  assert.deepEqual(mesh.unsupportedNames, [
+    "example:machine",
+    "minecraft:chest",
+  ]);
+  assert.ok(mesh.faceCount > 0);
+});
+
+test("translucent and compiled-model face budgets bound their separate workloads", () => {
+  assert.equal(MAX_TRANSLUCENT_FACES, 65536);
+  assert.equal(MAX_COMPILED_FACES, 200000);
+  const edge = 30;
+  const blocks = Uint32Array.from({ length: edge ** 3 }, (_value, index) => {
+    const x = index % edge;
+    const z = Math.floor(index / edge) % edge;
+    const y = Math.floor(index / (edge * edge));
+    return (x + y + z) % 2;
+  });
+  assert.throws(
+    () =>
+      buildMesh({
+        regions: [
+          region({
+            size: [edge, edge, edge],
+            palette: [{ name: "minecraft:glass" }, { name: "minecraft:air" }],
+            blocks,
+          }),
+        ],
+      }),
+    (error) => error.category === "too_complex"
+  );
+  const count = 4480;
+  const palette = Array.from({ length: count }, (_value, index) => ({
+    name: "minecraft:oak_fence",
+    properties: {
+      north: "true",
+      south: "true",
+      east: "true",
+      west: "true",
+      preview_variant: `${index}`,
+    },
+  }));
+  assert.throws(
+    () =>
+      buildMesh({
+        regions: [
+          region({
+            size: [70, 1, 64],
+            palette,
+            blocks: Uint32Array.from(
+              { length: count },
+              (_value, index) => index
+            ),
+          }),
+        ],
+      }),
+    (error) =>
+      error.category === "too_complex" &&
+      /distinct model faces/.test(error.message)
   );
 });
 

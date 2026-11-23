@@ -1,8 +1,15 @@
 /* eslint-disable no-bitwise -- Integer hashing gives stable original block color variation. */
 import { blockTextures } from "./block-textures.mjs";
+import { createFluidFaces, fluidState } from "./fluids.mjs";
+import {
+  resolveVanillaModel,
+  vanillaModelSeedPeriod,
+} from "./vanilla-models.mjs";
 
 export const MAX_MESH_FACES = 200000;
 export const MAX_MESH_MODELS = 8192;
+export const MAX_TRANSLUCENT_FACES = 65536;
+export const MAX_COMPILED_FACES = 200000;
 const CHUNK_FACES = 2048;
 const EPSILON = 1e-7;
 const AIR = new Set(["air", "cave_air", "void_air"]);
@@ -52,6 +59,15 @@ function hash(value) {
     result = Math.imul(result ^ value.charCodeAt(index), 16777619);
   }
   return result >>> 0;
+}
+
+function positionHash(x, y, z) {
+  return (
+    (Math.imul(x, 73856093) ^
+      Math.imul(y, 19349663) ^
+      Math.imul(z, 83492791)) >>>
+    0
+  );
 }
 
 function linear(hex) {
@@ -407,7 +423,7 @@ function faceColor(id, properties, color, axis, sign) {
   return color;
 }
 
-function compileModel(entry) {
+function compileFallback(entry) {
   const name = typeof entry === "string" ? entry : entry.name;
   const id = (name || "unknown").split(":").pop();
   if (name?.startsWith("minecraft:") && AIR.has(id)) {
@@ -476,65 +492,282 @@ function compileModel(entry) {
   };
 }
 
+function rectangleProjection(face) {
+  if (face.cullface < 0) {
+    return null;
+  }
+  const axis = Math.floor(face.cullface / 2);
+  const plane = face.cullface % 2;
+  const [u, v] = AXES[axis];
+  const points = [0, 3, 6, 9];
+  if (
+    points.some(
+      (offset) => Math.abs(face.vertices[offset + axis] - plane) > EPSILON
+    )
+  ) {
+    return null;
+  }
+  const rect = [
+    Math.min(...points.map((offset) => face.vertices[offset + u])),
+    Math.min(...points.map((offset) => face.vertices[offset + v])),
+    Math.max(...points.map((offset) => face.vertices[offset + u])),
+    Math.max(...points.map((offset) => face.vertices[offset + v])),
+  ];
+  const rectangular = points.every((offset) =>
+    [u, v].every(
+      (coordinate, index) =>
+        Math.abs(face.vertices[offset + coordinate] - rect[index]) < EPSILON ||
+        Math.abs(face.vertices[offset + coordinate] - rect[index + 2]) < EPSILON
+    )
+  );
+  return { axis, plane, u, v, rect, rectangular };
+}
+
+function boundaryCoverage(faces) {
+  const result = Array.from({ length: 6 }, () => []);
+  for (const face of faces) {
+    const projection = rectangleProjection(face);
+    if (projection?.rectangular) {
+      result[face.cullface].push(projection.rect);
+    }
+  }
+  return result;
+}
+
+function fallbackQuad(face) {
+  const [u, v] = AXES[face.axis];
+  const corners = [
+    [face.rect[0], face.rect[1]],
+    [face.rect[2], face.rect[1]],
+    [face.rect[2], face.rect[3]],
+    [face.rect[0], face.rect[3]],
+  ];
+  const order = (face.axis === 1 ? face.sign < 0 : face.sign > 0)
+    ? [0, 1, 2, 3]
+    : [0, 3, 2, 1];
+  const vertices = [];
+  const uvs = [];
+  for (const index of order) {
+    const [a, b] = corners[index];
+    const point = [0, 0, 0];
+    point[face.axis] = face.plane;
+    point[u] = a;
+    point[v] = b;
+    vertices.push(...point);
+    uvs.push(
+      face.uv[0] * a + face.uv[1] * b + face.uv[2],
+      face.uv[3] * a + face.uv[4] * b + face.uv[5]
+    );
+  }
+  const normal = [0, 0, 0];
+  normal[face.axis] = face.sign;
+  return {
+    vertices,
+    uvs,
+    normal,
+    tint: face.color,
+    layer: "opaque",
+    shade: true,
+    cullface: face.boundary ? face.axis * 2 + (face.sign > 0 ? 1 : 0) : -1,
+  };
+}
+
+function compileModel(entry, seed = 0) {
+  const name = typeof entry === "string" ? entry : entry.name;
+  if (name?.startsWith("minecraft:") && AIR.has(name.slice(10))) {
+    return null;
+  }
+  const fluid = fluidState(entry);
+  let faces = [];
+  let occlusion = Array.from({ length: 6 }, () => []);
+  let fallback = false;
+  if (!fluid || fluid.waterlogged) {
+    const resolved = resolveVanillaModel(entry, seed);
+    if (resolved?.supported && resolved.faces) {
+      faces = resolved.faces;
+      occlusion = resolved.occlusion || occlusion;
+    } else {
+      const approximate = compileFallback(entry);
+      faces = approximate.faces.map(fallbackQuad);
+      if (approximate.occludes) {
+        occlusion = boundaryCoverage(faces);
+      }
+      fallback = true;
+    }
+  }
+  const coverage = boundaryCoverage(faces);
+  faces = faces.map((face) => ({
+    ...face,
+    projection: rectangleProjection(face),
+  }));
+  // Fluid occupancy is independent of visual opacity: full glass/leaves hold
+  // the shoreline while their textures still reveal neighboring surfaces.
+  const solid = coverage.every((rectangles) =>
+    rectangles.some(
+      ([u0, v0, u1, v1]) =>
+        u0 <= EPSILON && v0 <= EPSILON && u1 >= 1 - EPSILON && v1 >= 1 - EPSILON
+    )
+  );
+  return {
+    name,
+    fluid,
+    faces,
+    occlusion,
+    coverage,
+    solid,
+    fallback,
+    sameGlass:
+      name?.startsWith("minecraft:") &&
+      /(?:^|_)glass(?:_pane)?$/.test(name.slice(10)),
+  };
+}
+
+function clipQuad(face, covers) {
+  if (!covers?.length) {
+    return [face];
+  }
+  const projection = face.projection || rectangleProjection(face);
+  if (!projection) {
+    return [face];
+  }
+  const source = projection.rect;
+  if (
+    covers.some(
+      ([u0, v0, u1, v1]) =>
+        u0 <= source[0] + EPSILON &&
+        v0 <= source[1] + EPSILON &&
+        u1 >= source[2] - EPSILON &&
+        v1 >= source[3] - EPSILON
+    )
+  ) {
+    return [];
+  }
+  // A sloped/rotated polygon must not be replaced with its bounding box.
+  if (!projection.rectangular) {
+    return [face];
+  }
+  let rectangles = [source];
+  for (const cover of covers) {
+    rectangles = rectangles.flatMap((rect) => subtract(rect, cover));
+  }
+  if (rectangles.length === 1 && rectangles[0] === source) {
+    return [face];
+  }
+  const { u, v } = projection;
+  const width = source[2] - source[0];
+  const height = source[3] - source[1];
+  if (width < EPSILON || height < EPSILON) {
+    return [face];
+  }
+  return rectangles.map((rect) => {
+    const vertices = [...face.vertices];
+    const uvs = [];
+    for (let corner = 0; corner < 4; corner++) {
+      const offset = corner * 3;
+      const a =
+        rect[Math.abs(face.vertices[offset + u] - source[0]) < EPSILON ? 0 : 2];
+      const b =
+        rect[Math.abs(face.vertices[offset + v] - source[1]) < EPSILON ? 1 : 3];
+      vertices[offset + u] = a;
+      vertices[offset + v] = b;
+      const s = (a - source[0]) / width;
+      const t = (b - source[1]) / height;
+      const texcoord = [0, 0];
+      for (let original = 0; original < 4; original++) {
+        const weight =
+          (Math.abs(face.vertices[original * 3 + u] - source[0]) < EPSILON
+            ? 1 - s
+            : s) *
+          (Math.abs(face.vertices[original * 3 + v] - source[1]) < EPSILON
+            ? 1 - t
+            : t);
+        texcoord[0] += face.uvs[original * 2] * weight;
+        texcoord[1] += face.uvs[original * 2 + 1] * weight;
+      }
+      uvs.push(...texcoord);
+    }
+    return { ...face, vertices, uvs, projection: null };
+  });
+}
+
 class MeshWriter {
   constructor() {
-    this.chunks = [];
+    this.layers = [
+      { chunks: [], faceCount: 0 },
+      { chunks: [], faceCount: 0 },
+    ];
     this.faceCount = 0;
   }
 
-  face(face, rect, x, y, z, variation) {
-    if (this.faceCount >= MAX_MESH_FACES) {
+  face(face, x, y, z, variation) {
+    const translucent = face.layer === "translucent";
+    const layer = this.layers[translucent ? 1 : 0];
+    if (
+      this.faceCount >= MAX_MESH_FACES ||
+      (translucent && layer.faceCount >= MAX_TRANSLUCENT_FACES)
+    ) {
       const error = new Error(
         "The schematic has too many visible faces to preview."
       );
       error.category = "too_complex";
       throw error;
     }
-    const slot = this.faceCount % CHUNK_FACES;
+    const slot = layer.faceCount % CHUNK_FACES;
     if (slot === 0) {
-      this.chunks.push({
+      layer.chunks.push({
         positions: new Float32Array(CHUNK_FACES * 18),
         normals: new Float32Array(CHUNK_FACES * 18),
         colors: new Float32Array(CHUNK_FACES * 18),
         uvs: new Float32Array(CHUNK_FACES * 12),
       });
     }
-    const chunk = this.chunks[this.chunks.length - 1];
-    const [u] = AXES[face.axis];
+    const chunk = layer.chunks[layer.chunks.length - 1];
     const origin = [x, y, z];
-    const corners = [
-      [rect[0], rect[1]],
-      [rect[2], rect[1]],
-      [rect[2], rect[3]],
-      [rect[0], rect[3]],
-    ];
-    const winding = (face.axis === 1 ? face.sign < 0 : face.sign > 0)
-      ? [0, 1, 2, 0, 2, 3]
-      : [0, 2, 1, 0, 3, 2];
+    const normal = face.shadeNormal || face.normal;
     const shade =
-      (face.axis === 1
-        ? face.sign > 0
-          ? 1
-          : 0.72
-        : face.axis === 0
-          ? 0.87
-          : 0.94) * variation;
+      (face.shade === false
+        ? 1
+        : normal[0] ** 2 * 0.87 +
+          normal[1] ** 2 * (normal[1] >= 0 ? 1 : 0.72) +
+          normal[2] ** 2 * 0.94) * variation;
     let offset = slot * 18;
     let uvOffset = slot * 12;
-    for (const corner of winding) {
-      const [a, b] = corners[corner];
-      chunk.uvs[uvOffset++] = face.uv[0] * a + face.uv[1] * b + face.uv[2];
-      chunk.uvs[uvOffset++] = face.uv[3] * a + face.uv[4] * b + face.uv[5];
+    const order = [0, 1, 2, 0, 2, 3];
+    for (let vertex = 0; vertex < order.length; vertex++) {
+      const corner = order[vertex];
+      let surfaceNormal = face.normal;
+      if (face.fluid && face.cullface === 3) {
+        const start = vertex < 3 ? 0 : 3;
+        const a = [0, 1, 2].map(
+          (axis) =>
+            face.vertices[order[start + 1] * 3 + axis] -
+            face.vertices[order[start] * 3 + axis]
+        );
+        const b = [0, 1, 2].map(
+          (axis) =>
+            face.vertices[order[start + 2] * 3 + axis] -
+            face.vertices[order[start] * 3 + axis]
+        );
+        surfaceNormal = [
+          a[1] * b[2] - a[2] * b[1],
+          a[2] * b[0] - a[0] * b[2],
+          a[0] * b[1] - a[1] * b[0],
+        ];
+        const magnitude = Math.hypot(...surfaceNormal) || 1;
+        surfaceNormal = surfaceNormal.map((value) => value / magnitude);
+      }
+      chunk.uvs[uvOffset++] = face.uvs[corner * 2];
+      chunk.uvs[uvOffset++] = face.uvs[corner * 2 + 1];
       for (let axis = 0; axis < 3; axis++) {
-        const coordinate =
-          axis === face.axis ? face.plane : corners[corner][axis === u ? 0 : 1];
-        chunk.positions[offset] = origin[axis] + coordinate;
-        chunk.normals[offset] = axis === face.axis ? face.sign : 0;
-        chunk.colors[offset] = Math.min(1, face.color[axis] * shade);
+        chunk.positions[offset] =
+          origin[axis] + face.vertices[corner * 3 + axis];
+        chunk.normals[offset] = surfaceNormal[axis];
+        chunk.colors[offset] = Math.min(1, face.tint[axis] * shade);
         offset++;
       }
     }
     this.faceCount++;
+    layer.faceCount++;
   }
 
   finish() {
@@ -545,25 +778,31 @@ class MeshWriter {
       colors: new Float32Array(length),
       uvs: new Float32Array(this.faceCount * 12),
       faceCount: this.faceCount,
+      opaqueFaceCount: this.layers[0].faceCount,
+      translucentFaceCount: this.layers[1].faceCount,
     };
     let offset = 0;
-    for (const chunk of this.chunks) {
-      const count = Math.min(CHUNK_FACES * 18, length - offset);
-      for (const key of ["positions", "normals", "colors"]) {
-        result[key].set(chunk[key].subarray(0, count), offset);
+    for (const layer of this.layers) {
+      let remaining = layer.faceCount * 18;
+      for (const chunk of layer.chunks) {
+        const count = Math.min(CHUNK_FACES * 18, remaining);
+        for (const key of ["positions", "normals", "colors"]) {
+          result[key].set(chunk[key].subarray(0, count), offset);
+        }
+        result.uvs.set(
+          chunk.uvs.subarray(0, (count / 18) * 12),
+          (offset / 18) * 12
+        );
+        offset += count;
+        remaining -= count;
       }
-      result.uvs.set(
-        chunk.uvs.subarray(0, (count / 18) * 12),
-        (offset / 18) * 12
-      );
-      offset += count;
+      layer.chunks = [];
     }
-    this.chunks = [];
     return result;
   }
 }
 
-/** Original approximate models. cutY is inclusive world Y; output is relative
+/** Bundled vanilla models with explicit fallback. cutY is inclusive world Y; output is relative
  * to scene.bounds.min so even distant regions retain Float32 block precision. */
 export function buildMesh(scene, cutY = Infinity) {
   const origin = scene.bounds?.min || [0, 0, 0];
@@ -573,35 +812,55 @@ export function buildMesh(scene, cutY = Infinity) {
     max: region.position.map((value, axis) => value + region.size[axis]),
   }));
   let modelCount = 0;
-  const compiledModels = new Map();
-  const modelFor = (region, index) => {
-    if (region.models.has(index)) {
-      return region.models.get(index);
+  let compiledFaceCount = 0;
+  const compiledStates = new Map();
+  const modelFor = (region, index, x, y, z) => {
+    let state = region.models.get(index);
+    if (!state) {
+      const entry = region.palette[index];
+      const properties = entry.properties || {};
+      const name = typeof entry === "string" ? entry : entry.name;
+      const key = JSON.stringify([
+        name,
+        Object.keys(properties)
+          .sort()
+          .map((property) => [property, properties[property]]),
+      ]);
+      state = compiledStates.get(key);
+      if (!state) {
+        if (
+          !(name?.startsWith("minecraft:") && AIR.has(name.slice(10))) &&
+          ++modelCount > MAX_MESH_MODELS
+        ) {
+          const error = new Error(
+            "The schematic has too many distinct block models to preview."
+          );
+          error.category = "too_complex";
+          throw error;
+        }
+        state = {
+          entry,
+          period: vanillaModelSeedPeriod(entry),
+          variants: new Map(),
+        };
+        compiledStates.set(key, state);
+      }
+      region.models.set(index, state);
     }
-    const entry = region.palette[index];
-    const properties = entry.properties || {};
-    const key = JSON.stringify([
-      typeof entry === "string" ? entry : entry.name,
-      Object.keys(properties)
-        .sort()
-        .map((name) => [name, properties[name]]),
-    ]);
-    let model;
-    if (compiledModels.has(key)) {
-      model = compiledModels.get(key);
-    } else {
-      model = compileModel(entry);
-      if (model && ++modelCount > MAX_MESH_MODELS) {
+    const seed = state.period === 1 ? 0 : positionHash(x, y, z) % state.period;
+    if (!state.variants.has(seed)) {
+      const model = compileModel(state.entry, seed);
+      compiledFaceCount += model?.faces.length || 0;
+      if (compiledFaceCount > MAX_COMPILED_FACES) {
         const error = new Error(
-          "The schematic has too many distinct block models to preview."
+          "The schematic has too many distinct model faces to preview."
         );
         error.category = "too_complex";
         throw error;
       }
-      compiledModels.set(key, model);
+      state.variants.set(seed, model);
     }
-    region.models.set(index, model);
-    return model;
+    return state.variants.get(seed);
   };
   // Only region-boundary lookups can cross this short adjacency list. No
   // per-cell map, string keys, or copy of the decoded block volume is needed.
@@ -624,9 +883,17 @@ export function buildMesh(scene, cutY = Infinity) {
     if (x < 0 || y < 0 || z < 0 || x >= sx || y >= sy || z >= sz) {
       return null;
     }
-    return modelFor(region, region.blocks[x + sx * (z + sz * y)]);
+    return modelFor(
+      region,
+      region.blocks[x + sx * (z + sz * y)],
+      x + ox,
+      y + oy,
+      z + oz
+    );
   };
   const writer = new MeshWriter();
+  let fallbackBlockCount = 0;
+  const unsupportedNames = new Set();
   for (let regionIndex = 0; regionIndex < regions.length; regionIndex++) {
     const region = regions[regionIndex];
     const [sx, sy, sz] = region.size;
@@ -652,22 +919,24 @@ export function buildMesh(scene, cutY = Infinity) {
       for (let lz = 0; lz < sz; lz++) {
         const z = oz + lz;
         for (let lx = 0; lx < sx; lx++) {
+          const x = ox + lx;
           const model = modelFor(
             region,
-            region.blocks[lx + sx * (lz + sz * ly)]
+            region.blocks[lx + sx * (lz + sz * ly)],
+            x,
+            y,
+            z
           );
           if (!model) {
             continue;
           }
-          const x = ox + lx;
-          const variation =
-            0.97 +
-            (((Math.imul(x, 73856093) ^
-              Math.imul(y, 19349663) ^
-              Math.imul(z, 83492791)) >>>
-              0) %
-              61) /
-              1000;
+          if (model.fallback) {
+            fallbackBlockCount++;
+            if (unsupportedNames.size < 20) {
+              unsupportedNames.add(model.name);
+            }
+          }
+          const variation = 0.97 + (positionHash(x, y, z) % 61) / 1000;
           const neighbors = [
             neighbor(x - 1, y, z),
             neighbor(x + 1, y, z),
@@ -676,47 +945,47 @@ export function buildMesh(scene, cutY = Infinity) {
             neighbor(x, y, z - 1),
             neighbor(x, y, z + 1),
           ];
-          for (const face of model.faces) {
-            let rectangles = [face.rect];
-            const other = face.boundary
-              ? neighbors[face.axis * 2 + (face.sign > 0 ? 1 : 0)]
-              : null;
-            if (other?.occludes && other.full) {
-              continue;
+          const emit = (face) => {
+            const direction = face.cullface;
+            const other = direction >= 0 ? neighbors[direction] : null;
+            const opposite = direction % 2 ? direction - 1 : direction + 1;
+            let quads = [face];
+            if (face.fluid && model.fluid.waterlogged && direction >= 0) {
+              quads = clipQuad(face, model.occlusion[direction]);
             }
-            if (other?.occludes) {
-              const [u, v] = AXES[face.axis];
-              for (const item of other.boxes) {
-                const bounds = item.bounds;
-                if (
-                  bounds[face.axis + (face.sign > 0 ? 0 : 3)] ===
-                  (face.sign > 0 ? 0 : 1)
-                ) {
-                  rectangles = rectangles.flatMap((rect) =>
-                    subtract(rect, [
-                      bounds[u],
-                      bounds[v],
-                      bounds[u + 3],
-                      bounds[v + 3],
-                    ])
-                  );
-                }
-              }
+            if (other) {
+              const covers =
+                model.sameGlass && other.name === model.name
+                  ? other.coverage[opposite]
+                  : other.occlusion[opposite];
+              quads = quads.flatMap((quad) => clipQuad(quad, covers));
             }
-            for (const rect of rectangles) {
+            for (const quad of quads) {
               writer.face(
-                face,
-                rect,
+                quad,
                 x - origin[0],
                 y - origin[1],
                 z - origin[2],
                 variation
               );
             }
+          };
+          model.faces.forEach(emit);
+          if (model.fluid) {
+            const fluidFaces = createFluidFaces(model.fluid, (dx, dy, dz) =>
+              dx === 0 && dy === 0 && dz === 0
+                ? model
+                : neighbor(x + dx, y + dy, z + dz)
+            );
+            fluidFaces.forEach(emit);
           }
         }
       }
     }
   }
-  return writer.finish();
+  return {
+    ...writer.finish(),
+    fallbackBlockCount,
+    unsupportedNames: [...unsupportedNames].sort(),
+  };
 }

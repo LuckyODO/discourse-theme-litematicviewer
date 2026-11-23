@@ -172,6 +172,8 @@ RSpec.describe "Litematic attachment previews" do
                     faceCount: data.faceCount,
                     positionCount: data.positions.length,
                     uvCount: data.uvs.length,
+                    opaqueFaceCount: data.opaqueFaceCount,
+                    translucentFaceCount: data.translucentFaceCount,
                     validUVs: data.uvs.every((value) => Number.isFinite(value) && value >= 0 && value <= 1),
                     texturedUVs: data.uvs.some((value) => value !== data.uvs[0]),
                   });
@@ -200,6 +202,8 @@ RSpec.describe "Litematic attachment previews" do
       "faceCount" => 6,
       "positionCount" => 108,
       "uvCount" => 72,
+      "opaqueFaceCount" => 6,
+      "translucentFaceCount" => 0,
       "validUVs" => true,
       "texturedUVs" => true,
     )

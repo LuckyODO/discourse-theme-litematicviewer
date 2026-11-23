@@ -76,6 +76,7 @@ export default class LitematicPreview extends Component {
         "blocks",
         "dimensions",
         "basic_models",
+        "fallback_models",
       ].map((key) => [key, i18n(themePrefix(`litematic.${key}`))])
     );
     this.session = createViewerSession({

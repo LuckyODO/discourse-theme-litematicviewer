@@ -3,6 +3,7 @@ import { expect, test } from "@playwright/test";
 import { mkdir } from "node:fs/promises";
 import { gzipSync } from "node:zlib";
 import { PNG } from "pngjs";
+import { MODEL_SHOWCASE_EXPECTED } from "../fixtures/model-showcase.mjs";
 
 const externalRequests = new WeakMap();
 const scriptErrors = new WeakMap();
@@ -225,6 +226,156 @@ test("renders embedded textures with CSP denying all image URLs", async ({
   await openPreview(page);
   await expectReady(page);
   expect(await page.evaluate(() => window.cspViolations)).toEqual([]);
+});
+
+test("renders vanilla model states and layered fluids with two batched surface passes", async ({
+  page,
+}, testInfo) => {
+  await page.addInitScript(() => {
+    const NativeWorker = window.Worker;
+    window.modelMeshes = [];
+    window.Worker = class extends NativeWorker {
+      constructor(...args) {
+        super(...args);
+        this.addEventListener("message", ({ data }) => {
+          if (data.type === "mesh") {
+            window.modelMeshes.push({
+              faces: data.faceCount,
+              opaque: data.opaqueFaceCount,
+              translucent: data.translucentFaceCount,
+              fallback: data.fallbackBlockCount,
+            });
+          }
+        });
+      }
+    };
+    window.surfaceFrames = [];
+    const prototype = WebGL2RenderingContext.prototype;
+    const clear = prototype.clear;
+    const draw = prototype.drawElements;
+    prototype.clear = function (...args) {
+      window.surfaceFrames.push([]);
+      return clear.apply(this, args);
+    };
+    prototype.drawElements = function (mode, count, ...args) {
+      if (mode === this.TRIANGLES && count) {
+        window.surfaceFrames.at(-1)?.push({
+          count,
+          blend: this.isEnabled(this.BLEND),
+          depthWrite: this.getParameter(this.DEPTH_WRITEMASK),
+        });
+      }
+      return draw.call(this, mode, count, ...args);
+    };
+  });
+  await page.goto("/?showcase=1");
+  await openPreview(page);
+  await expect(page.locator("dialog")).toHaveAttribute("data-state", "ready");
+  await expect(page.locator(".litematic-model-summary")).toHaveAttribute(
+    "data-block-count",
+    String(MODEL_SHOWCASE_EXPECTED.blockCount)
+  );
+  await expect(page.locator(".litematic-model-summary")).toContainText(
+    MODEL_SHOWCASE_EXPECTED.dimensions.join(" × ")
+  );
+  await expect(page.locator(".litematic-model-note")).not.toContainText(
+    "后备模型"
+  );
+  const stats = await page.evaluate(() => ({
+    mesh: window.modelMeshes.at(-1),
+    frame: window.surfaceFrames.filter((frame) => frame.length).at(-1),
+  }));
+  expect(stats.mesh.fallback).toBe(0);
+  expect(stats.mesh.opaque).toBeGreaterThan(0);
+  expect(stats.mesh.translucent).toBeGreaterThan(0);
+  expect(stats.mesh.faces).toBe(stats.mesh.opaque + stats.mesh.translucent);
+  expect(stats.frame).toEqual([
+    { count: stats.mesh.opaque * 6, blend: false, depthWrite: true },
+    { count: stats.mesh.translucent * 6, blend: true, depthWrite: false },
+  ]);
+  await page.getByRole("button", { name: "放大", exact: true }).click();
+  await mkdir(".impeccable/review", { recursive: true });
+  await page.screenshot({
+    path: `.impeccable/review/vanilla-models-${testInfo.project.name}.png`,
+    fullPage: true,
+    animations: "disabled",
+  });
+  const canvas = page.locator(".litematic-canvas canvas");
+  const initial = await canvas.screenshot();
+  const canvasBounds = await canvas.boundingBox();
+  const dragX = canvasBounds.x + canvasBounds.width * 0.5;
+  const dragY = canvasBounds.y + canvasBounds.height * 0.5;
+  await page.mouse.move(dragX, dragY);
+  await page.mouse.down();
+  await page.mouse.move(
+    dragX + Math.min(150, canvasBounds.width * 0.3),
+    dragY + 25,
+    { steps: 12 }
+  );
+  await page.mouse.up();
+  await expect
+    .poll(async () => (await canvas.screenshot()).equals(initial))
+    .toBe(false);
+  expect(await page.evaluate(() => window.modelMeshes.length)).toBe(1);
+  const slider = page.getByRole("slider", { name: "分层" });
+  await slider.focus();
+  await slider.press("Home");
+  await expect(page.locator(".litematic-viewer")).not.toHaveAttribute(
+    "aria-busy",
+    "true"
+  );
+  expect(await page.evaluate(() => window.modelMeshes.at(-1).translucent)).toBe(
+    0
+  );
+  await slider.press("End");
+  await expect(page.locator(".litematic-viewer")).not.toHaveAttribute(
+    "aria-busy",
+    "true"
+  );
+  expect(
+    await page.evaluate(() => window.modelMeshes.at(-1).translucent)
+  ).toBeGreaterThan(0);
+});
+
+test("glass and water visibly blend with the structure behind them", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const prototype = WebGL2RenderingContext.prototype;
+    const enable = prototype.enable;
+    const disable = prototype.disable;
+    prototype.enable = function (capability) {
+      if (capability === this.BLEND && window.disableBlending) {
+        return disable.call(this, capability);
+      }
+      return enable.call(this, capability);
+    };
+  });
+  await page.goto("/?showcase=1");
+  await openPreview(page);
+  await expect(page.locator("dialog")).toHaveAttribute("data-state", "ready");
+  const blended = PNG.sync.read(
+    await page.locator(".litematic-canvas canvas").screenshot()
+  );
+  await page.getByRole("button", { name: "关闭预览" }).click();
+  await page.evaluate(() => (window.disableBlending = true));
+  await openPreview(page);
+  await expect(page.locator("dialog")).toHaveAttribute("data-state", "ready");
+  const opaque = PNG.sync.read(
+    await page.locator(".litematic-canvas canvas").screenshot()
+  );
+  let changed = 0;
+  for (let index = 0; index < blended.data.length; index += 4) {
+    if (
+      Math.abs(blended.data[index] - opaque.data[index]) +
+        Math.abs(blended.data[index + 1] - opaque.data[index + 1]) +
+        Math.abs(blended.data[index + 2] - opaque.data[index + 2]) >
+      40
+    ) {
+      changed++;
+    }
+  }
+  expect(changed).toBeGreaterThan(1000);
 });
 
 test("releases an atlas decoded after closing and loads a fresh one on reopen", async ({

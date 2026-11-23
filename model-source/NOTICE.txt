@@ -1,0 +1,19 @@
+Minecraft Java Edition 26.3 block model and blockstate resources
+
+Copyright Mojang AB and Microsoft. All rights reserved by the respective rights
+holders. These resource files and the generated model data are separate from
+this project's MIT-licensed code and Three.js.
+
+Source: official Minecraft Java Edition 26.3 client archive, restricted to
+assets/minecraft/blockstates/*.json and assets/minecraft/models/block/**/*.json.
+Original file bytes are preserved as base64 in model-source/26.3.json.
+Client SHA-1: e877b6a07acd633fb3bb475002175cec036e7b87
+Source manifest:
+https://piston-meta.mojang.com/v1/packages/ead839cbccf0ddf013c3f935f2840080b5cb0d26/26.3.json
+
+Minecraft terms:
+https://www.minecraft.net/en-us/eula
+https://www.minecraft.net/en-us/usage-guidelines
+
+NOT AN OFFICIAL MINECRAFT PRODUCT. NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR
+MICROSOFT.

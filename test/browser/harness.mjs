@@ -5,6 +5,12 @@ import {
 import { createViewerSession } from "/javascripts/discourse/lib/litematic-viewer-session.js";
 
 const params = new URLSearchParams(location.search);
+if (params.has("showcase")) {
+  const attachment = document.querySelector(".cooked a.attachment");
+  attachment.href = "/uploads/short-url/showcase";
+  attachment.textContent = "原版模型与透明效果.litematic";
+  attachment.setAttribute("data-orig-filename", "原版模型与透明效果.litematic");
+}
 const modal = document.querySelector("dialog");
 const stage = document.querySelector(".litematic-preview__stage");
 const status = document.querySelector(".litematic-preview__status");
@@ -79,7 +85,8 @@ function open(item) {
       more_materials: "种其他方块",
       blocks: "个方块",
       dimensions: "尺寸",
-      basic_models: "原版材质 · 部分模型已简化",
+      basic_models: "原版方块模型与材质",
+      fallback_models: "个方块使用后备模型",
     },
     onStatus(event) {
       window.previewEvents.push(event);

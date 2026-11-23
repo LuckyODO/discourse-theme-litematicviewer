@@ -1,0 +1,18 @@
+{
+  "edition": "Minecraft Java Edition",
+  "version": "26.3",
+  "versionManifestUrl": "https://piston-meta.mojang.com/v1/packages/ead839cbccf0ddf013c3f935f2840080b5cb0d26/26.3.json",
+  "clientUrl": "https://piston-data.mojang.com/v1/objects/e877b6a07acd633fb3bb475002175cec036e7b87/client.jar",
+  "clientSha1": "e877b6a07acd633fb3bb475002175cec036e7b87",
+  "extractedPaths": [
+    "assets/minecraft/blockstates/",
+    "assets/minecraft/models/block/"
+  ],
+  "sourceContainer": "26.3.json",
+  "sourceContainerFormat": "litematic-model-source-v1",
+  "copyright": "Minecraft model and blockstate resources belong to Mojang AB and Microsoft. They are separate from this project's MIT-licensed code.",
+  "terms": [
+    "https://www.minecraft.net/en-us/eula",
+    "https://www.minecraft.net/en-us/usage-guidelines"
+  ]
+}

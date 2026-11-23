@@ -4,27 +4,6 @@ import { gzipSync } from "node:zlib";
 // Original synthetic pavilion; this fixture contains block IDs, not game assets.
 // Each palette index is packed continuously, least-significant bits first.
 export function createLitematicFixture() {
-  const text = (value) => {
-    const bytes = Buffer.from(value);
-    const size = Buffer.alloc(2);
-    size.writeUInt16BE(bytes.length);
-    return Buffer.concat([size, bytes]);
-  };
-  const int = (value) => {
-    const bytes = Buffer.alloc(4);
-    bytes.writeInt32BE(value);
-    return bytes;
-  };
-  const tag = (type, name, payload) =>
-    Buffer.concat([Buffer.from([type]), text(name), payload]);
-  const compound = (tags) => Buffer.concat([...tags, Buffer.from([0])]);
-  const vector = (name, x, y, z) =>
-    tag(
-      10,
-      name,
-      compound([tag(3, "x", int(x)), tag(3, "y", int(y)), tag(3, "z", int(z))])
-    );
-  const string = (name, value) => tag(8, name, text(value));
   const palette = [
     "air",
     "grass_block",
@@ -59,13 +38,52 @@ export function createLitematicFixture() {
     }
   }
   put(4, 2, 4, 4);
-  const words = new Array(Math.ceil((blocks.length * 3) / 64)).fill(0n);
+  return encodeLitematicFixture({
+    name: "Synthetic pavilion",
+    regionName: "Pavilion",
+    palette,
+    size,
+    blocks,
+  });
+}
+
+// Palette entry zero is air. State properties are written as real NBT compounds.
+export function encodeLitematicFixture({
+  name,
+  regionName,
+  palette,
+  size,
+  blocks,
+}) {
+  const text = (value) => {
+    const bytes = Buffer.from(value);
+    const length = Buffer.alloc(2);
+    length.writeUInt16BE(bytes.length);
+    return Buffer.concat([length, bytes]);
+  };
+  const int = (value) => {
+    const bytes = Buffer.alloc(4);
+    bytes.writeInt32BE(value);
+    return bytes;
+  };
+  const tag = (type, field, payload) =>
+    Buffer.concat([Buffer.from([type]), text(field), payload]);
+  const compound = (tags) => Buffer.concat([...tags, Buffer.from([0])]);
+  const vector = (field, x, y, z) =>
+    tag(
+      10,
+      field,
+      compound([tag(3, "x", int(x)), tag(3, "y", int(y)), tag(3, "z", int(z))])
+    );
+  const string = (field, value) => tag(8, field, text(value));
+  const bits = Math.max(2, Math.ceil(Math.log2(palette.length)));
+  const words = new Array(Math.ceil((blocks.length * bits) / 64)).fill(0n);
   blocks.forEach((block, index) => {
-    const bit = index * 3;
+    const bit = index * bits;
     const word = Math.floor(bit / 64);
     const offset = BigInt(bit % 64);
     words[word] |= BigInt(block) << offset;
-    if (offset > 61n) {
+    if (offset + BigInt(bits) > 64n) {
       words[word + 1] |= BigInt(block) >> (64n - offset);
     }
   });
@@ -82,9 +100,27 @@ export function createLitematicFixture() {
       Buffer.concat([
         Buffer.from([10]),
         int(palette.length),
-        ...palette.map((name) =>
-          compound([string("Name", `minecraft:${name}`)])
-        ),
+        ...palette.map((entry) => {
+          const block = typeof entry === "string" ? { name: entry } : entry;
+          const fullName = block.name.includes(":")
+            ? block.name
+            : `minecraft:${block.name}`;
+          const fields = [string("Name", fullName)];
+          if (block.properties && Object.keys(block.properties).length) {
+            fields.push(
+              tag(
+                10,
+                "Properties",
+                compound(
+                  Object.entries(block.properties).map(([key, value]) =>
+                    string(key, value)
+                  )
+                )
+              )
+            );
+          }
+          return compound(fields);
+        }),
       ])
     ),
     tag(12, "BlockStates", Buffer.concat([int(words.length), packed])),
@@ -92,7 +128,7 @@ export function createLitematicFixture() {
     tag(9, "TileEntities", Buffer.concat([Buffer.from([10]), int(0)])),
   ]);
   const metadata = compound([
-    string("Name", "Synthetic pavilion"),
+    string("Name", name),
     string("Author", "Litematic Viewer tests"),
     string("Description", "Original generated test fixture"),
     tag(3, "RegionCount", int(1)),
@@ -109,7 +145,7 @@ export function createLitematicFixture() {
         tag(3, "SubVersion", int(1)),
         tag(3, "MinecraftDataVersion", int(3700)),
         tag(10, "Metadata", metadata),
-        tag(10, "Regions", compound([tag(10, "Pavilion", region)])),
+        tag(10, "Regions", compound([tag(10, regionName, region)])),
       ])
     )
   );

@@ -23,6 +23,7 @@ import {
   ATLAS_SIZE,
   TEXTURE_VERSION,
 } from "./generated/atlas-image.mjs";
+import { createTransparentSorter } from "./transparent-sorter.mjs";
 
 const DEFAULT_LABELS = {
   canvas_label: "Interactive 3D preview",
@@ -35,7 +36,8 @@ const DEFAULT_LABELS = {
   more_materials: "more block types",
   blocks: "blocks",
   dimensions: "Dimensions",
-  basic_models: "Vanilla textures · simplified models",
+  basic_models: "Vanilla block models and textures",
+  fallback_models: "blocks use fallback models",
 };
 
 function element(tag, className, text) {
@@ -90,7 +92,15 @@ export function create({
   root.append(header, viewport, toolbar, note);
   container.append(root);
 
-  let renderer, controls, worker, resizeObserver, mesh, grid, texture, bitmap;
+  let renderer,
+    controls,
+    worker,
+    resizeObserver,
+    mesh,
+    grid,
+    texture,
+    bitmap,
+    sorter;
   let stopped = false;
   let ready = false;
   let frame = 0;
@@ -105,6 +115,14 @@ export function create({
     vertexColors: true,
     alphaTest: 0.1,
     side: DoubleSide,
+  });
+  const translucentMaterial = new MeshLambertMaterial({
+    vertexColors: true,
+    transparent: true,
+    depthWrite: false,
+    alphaTest: 1 / 255,
+    side: DoubleSide,
+    forceSinglePass: true,
   });
   const cleanup = [];
 
@@ -129,6 +147,8 @@ export function create({
     grid?.geometry.dispose();
     grid?.material.dispose();
     material.dispose();
+    translucentMaterial.dispose();
+    sorter = undefined;
     texture?.dispose();
     bitmap?.close();
     renderer?.dispose();
@@ -188,6 +208,8 @@ export function create({
       texture.needsUpdate = true;
       material.map = texture;
       material.needsUpdate = true;
+      translucentMaterial.map = texture;
+      translucentMaterial.needsUpdate = true;
       worker.postMessage({ type: "load", buffer }, [buffer]);
     } catch {
       fail("configuration");
@@ -198,6 +220,14 @@ export function create({
     frame = 0;
     if (stopped || document.hidden || !renderer) {
       return;
+    }
+    if (sorter) {
+      camera.updateMatrixWorld();
+      if (sorter.update(camera.matrixWorldInverse.elements)) {
+        mesh.geometry.index.clearUpdateRanges();
+        mesh.geometry.index.addUpdateRange(sorter.offset, sorter.count);
+        mesh.geometry.index.needsUpdate = true;
+      }
     }
     renderer.render(scene, camera);
   }
@@ -379,6 +409,22 @@ export function create({
         geometry.setAttribute("normal", new BufferAttribute(data.normals, 3));
         geometry.setAttribute("color", new BufferAttribute(data.colors, 3));
         geometry.setAttribute("uv", new BufferAttribute(data.uvs, 2));
+        const opaqueFaces = data.opaqueFaceCount ?? data.faceCount;
+        const translucentFaces = data.translucentFaceCount ?? 0;
+        sorter = translucentFaces
+          ? createTransparentSorter(
+              data.positions,
+              opaqueFaces,
+              translucentFaces
+            )
+          : undefined;
+        if (sorter) {
+          geometry.setIndex(new BufferAttribute(sorter.indices, 1));
+        }
+        geometry.addGroup(0, opaqueFaces * 6, 0);
+        if (translucentFaces) {
+          geometry.addGroup(opaqueFaces * 6, translucentFaces * 6, 1);
+        }
         // The worker rebases coordinates before Float32 conversion, including large offsets.
         if (!box) {
           box = new Box3(
@@ -391,7 +437,10 @@ export function create({
           scene.remove(mesh);
           mesh.geometry.dispose();
         }
-        mesh = new Mesh(geometry, material);
+        mesh = new Mesh(geometry, [material, translucentMaterial]);
+        // The grid is a translucent helper under the structure; surfaces blend
+        // over it. All block faces stay in at most two batched draw calls.
+        mesh.renderOrder = 2;
         scene.add(mesh);
         root.removeAttribute("aria-busy");
         clearTimeout(layerDeadline);
@@ -401,6 +450,12 @@ export function create({
           summary.textContent = `${data.blockCount.toLocaleString()} ${copy.blocks} · ${size.x} × ${size.y} × ${size.z}`;
           summary.dataset.blockCount = String(data.blockCount);
           summary.title = copy.dimensions;
+          const fallbackCount = data.fallbackBlockCount || 0;
+          note.textContent =
+            copy.basic_models +
+            (fallbackCount
+              ? ` · ${fallbackCount.toLocaleString()} ${copy.fallback_models}`
+              : "");
           layer.min = String(data.bounds.min[1]);
           layer.max = String(data.bounds.max[1] - 1);
           layer.value = layer.max;
@@ -434,6 +489,7 @@ export function create({
           grid.position.set(center.x, box.min.y - 0.03, center.z);
           grid.material.transparent = true;
           grid.material.opacity = 0.25;
+          grid.renderOrder = 1;
           scene.add(grid);
           resize();
           reset();

@@ -1,6 +1,6 @@
 zh_CN:
   theme_metadata:
-    description: "使用组件内置的渲染器和原版材质，将上传的 Litematic 附件转换为 3D 预览入口，支持弹窗查看和独立下载。"
+    description: "使用组件内置的原版方块模型与材质，将上传的 Litematic 附件转换为 3D 预览入口，支持弹窗查看和独立下载。"
     settings:
       enabled: "在主题帖的 .litematic 附件旁显示 3D 预览和下载按钮。"
       max_preview_size_mb: "可预览的压缩附件大小上限（MiB），不影响下载。解压后的数据和模型复杂度另有上限。"
@@ -20,7 +20,8 @@ zh_CN:
     more_materials: "种其他方块"
     blocks: "个方块"
     dimensions: "尺寸"
-    basic_models: "原版材质 · 部分模型已简化"
+    basic_models: "原版方块模型与材质"
+    fallback_models: "个方块使用后备模型"
     download_status: "正在下载投影文件…"
     viewer: "正在准备 3D 预览…"
     hint: "拖动旋转 · 滚轮或双指缩放 · Esc 关闭"

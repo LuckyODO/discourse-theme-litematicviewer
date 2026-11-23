@@ -3,6 +3,8 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 
 const { buildTextures } = await import("./build-textures.mjs");
 await buildTextures();
+const { buildModels } = await import("./build-models.mjs");
+await buildModels();
 
 await mkdir(new URL("../assets/", import.meta.url), { recursive: true });
 for (const [source, name] of [
@@ -30,7 +32,11 @@ const textureLicense = await readFile(
   new URL("../texture-source/NOTICE.txt", import.meta.url),
   "utf8"
 );
+const modelLicense = await readFile(
+  new URL("../model-source/NOTICE.txt", import.meta.url),
+  "utf8"
+);
 await writeFile(
   new URL("../assets/THIRD-PARTY-LICENSES.txt", import.meta.url),
-  `Three.js (including OrbitControls)\n\n${license}\n\nMinecraft texture assets\n\n${textureLicense}`
+  `Three.js (including OrbitControls)\n\n${license}\n\nMinecraft texture assets\n\n${textureLicense}\n\nMinecraft model assets\n\n${modelLicense}`
 );
