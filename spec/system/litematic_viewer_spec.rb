@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "base64"
+require "open3"
 require "tempfile"
 
 # The theme CI container has no GPU. Keep Discourse's normal driver options and
@@ -23,7 +24,10 @@ module LitematicWebGLSystemDriver
           --use-gl=angle
           --use-angle=swiftshader
           --enable-unsafe-swiftshader
+          --enable-logging
+          --v=1
         ]
+      options[:args] << "--log-file=/tmp/litematic-chrome-#{Process.pid}.log"
     end
     super(name, mobile: mobile, **options)
   end
@@ -119,35 +123,40 @@ RSpec.describe "Litematic attachment previews", litematic_webgl: true do
     cdp&.detach
   end
 
+  def gpu_page_diagnostic(browser)
+    gpu_page = browser.new_page
+    gpu_page.goto("chrome://gpu", timeout: 10_000)
+    gpu_page.get_by_text("Problems Detected", exact: true).wait_for(timeout: 5000)
+    gpu_page.evaluate(<<~'JS')
+      () => {
+        const collect = (node) => {
+          if (node.nodeType === Node.TEXT_NODE) return node.textContent;
+          if (["SCRIPT", "STYLE"].includes(node.nodeName)) return "";
+          return [...node.childNodes].map(collect).join("\n") +
+            (node.shadowRoot ? collect(node.shadowRoot) : "");
+        };
+        const lines = collect(document.body).split(/\n+/).map((line) => line.trim()).filter(Boolean);
+        const section = (name, count) => {
+          const index = lines.findIndex((line) => line.includes(name));
+          return index >= 0 ? lines.slice(index, index + count) : ["Section unavailable"];
+        };
+        return {
+          problems: section("Problems Detected", 35),
+          logs: section("Log Messages", 40),
+          platform: section("Version Information", 20),
+        };
+      }
+    JS
+  ensure
+    gpu_page&.close
+  end
+
   def record_webgl_diagnostics
     diagnostics = { driver: Capybara.current_driver }
     page.driver.with_playwright_page do |browser_page|
       browser = browser_page.context.browser
       diagnostic_entry(diagnostics, :version) { browser.version }
       diagnostic_entry(diagnostics, :current_browser) { probe_webgl(browser) }
-      {
-        minimal: %w[--no-sandbox --enable-webgl --enable-unsafe-swiftshader],
-        swiftshader_webgl: %w[
-          --no-sandbox
-          --enable-webgl
-          --use-gl=angle
-          --use-angle=swiftshader-webgl
-          --enable-unsafe-swiftshader
-        ],
-      }.each do |name, arguments|
-        diagnostic_entry(diagnostics, name) do
-          result = nil
-          browser
-            .browser_type
-            .launch(
-              channel: "chromium",
-              headless: true,
-              args: arguments,
-              timeout: 15_000,
-            ) { |probe| result = probe_webgl(probe) }
-          result
-        end
-      end
       diagnostic_entry(diagnostics, :gpu) do
         browser_diagnostic(browser, "SystemInfo.getInfo")["gpu"].slice(
           "devices",
@@ -157,6 +166,48 @@ RSpec.describe "Litematic attachment previews", litematic_webgl: true do
       end
       diagnostic_entry(diagnostics, :arguments) do
         browser_diagnostic(browser, "Browser.getBrowserCommandLine")["arguments"]
+      end
+      diagnostic_entry(diagnostics, :gpu_page) { gpu_page_diagnostic(browser) }
+      diagnostic_entry(diagnostics, :chrome_log) do
+        File
+          .readlines("/tmp/litematic-chrome-#{Process.pid}.log")
+          .grep(/gpu|egl|vulkan|swiftshader|gl_|\bGL\b|ERROR/i)
+          .first(100)
+          .map(&:strip)
+      end
+      diagnostic_entry(diagnostics, :policies) do
+        Dir
+          .glob(
+            %w[
+              /etc/chromium/policies/{managed,recommended}/*.json
+              /etc/opt/chrome*/policies/{managed,recommended}/*.json
+            ],
+          )
+          .first(10)
+          .to_h do |path|
+            policies = JSON.parse(File.read(path))
+            [
+              path,
+              policies.select { |key, _| key.match?(/GPU|3D|HardwareAcceleration|SwiftShader/i) },
+            ]
+          end
+      end
+      diagnostic_entry(diagnostics, :platform) do
+        { os: File.read("/etc/os-release"), kernel: Open3.capture3("uname", "-a").first.strip }
+      end
+      diagnostic_entry(diagnostics, :libraries) do
+        directory = File.dirname(diagnostics.fetch(:arguments).first)
+        %w[libEGL.so libGLESv2.so libvk_swiftshader.so libvulkan.so.1].to_h do |name|
+          path = File.join(directory, name)
+          info = { exists: File.file?(path) }
+          if info[:exists]
+            info[:bytes] = File.size(path)
+            stdout, stderr, status = Open3.capture3("ldd", path)
+            info[:ldd] = (stdout + stderr).lines.first(20).map(&:strip)
+            info[:status] = status.exitstatus
+          end
+          [name, info]
+        end
       end
     end
     diagnostics
