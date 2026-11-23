@@ -156,7 +156,7 @@ RSpec.describe "Litematic attachment previews" do
     [false, true].each do |mobile|
       it "keeps attachment rows aligned and contained on #{mobile ? "mobile" : "desktop"}",
          mobile: mobile do
-        cooked = Nokogiri::HTML.fragment(post.cooked)
+        cooked = Nokogiri::HTML5.fragment(post.cooked)
         expect(cooked.at_css("p").css("a.attachment").size).to eq(4)
         expect(cooked.at_css("p").css("br").size).to be >= 3
         visit post.topic.url
