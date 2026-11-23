@@ -60,7 +60,9 @@ module LitematicWebGLSystemDriver
         ]
       # The slim CI container does not expose Chromium's bundled Vulkan loader
       # through the system dynamic-library search path.
-      options[:env] = LitematicWebGLSystemDriver.browser_environment(options[:env] || {})
+      options[:env] = LitematicWebGLSystemDriver
+        .browser_environment(options[:env] || {})
+        .map { |key, value| { name: key, value: value } }
     end
     super(name, mobile: mobile, **options)
   end
