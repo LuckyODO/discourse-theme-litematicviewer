@@ -17,7 +17,13 @@ module LitematicWebGLSystemDriver
     if RSpec.current_example&.metadata&.dig(:litematic_webgl)
       name = :"#{name}_litematic_webgl" unless name.to_s.end_with?("_litematic_webgl")
       options[:args] = Array(options[:args]) +
-        %w[--enable-webgl --use-gl=angle --use-angle=swiftshader --enable-unsafe-swiftshader]
+        %w[
+          --enable-automation
+          --enable-webgl
+          --use-gl=angle
+          --use-angle=swiftshader
+          --enable-unsafe-swiftshader
+        ]
     end
     super(name, mobile: mobile, **options)
   end
@@ -98,17 +104,27 @@ RSpec.describe "Litematic attachment previews", litematic_webgl: true do
     probe_page&.close
   end
 
+  def diagnostic_entry(diagnostics, name)
+    diagnostics[name] = yield
+  rescue StandardError => error
+    diagnostics[name] = { error: "#{error.class}: #{error.message}" }
+  ensure
+    warn "Litematic WebGL #{name}: #{JSON.generate(diagnostics[name])}"
+  end
+
+  def browser_diagnostic(browser, command)
+    cdp = browser.new_browser_cdp_session
+    cdp.send_message(command)
+  ensure
+    cdp&.detach
+  end
+
   def record_webgl_diagnostics
     diagnostics = { driver: Capybara.current_driver }
     page.driver.with_playwright_page do |browser_page|
       browser = browser_page.context.browser
-      cdp = browser.new_browser_cdp_session
-      diagnostics[:version] = browser.version
-      diagnostics[:arguments] = cdp.send_message("Browser.getBrowserCommandLine")["arguments"]
-      gpu = cdp.send_message("SystemInfo.getInfo")["gpu"]
-      diagnostics[:gpu] = gpu.slice("devices", "featureStatus", "auxAttributes")
-      cdp.detach
-      diagnostics[:current_browser] = probe_webgl(browser)
+      diagnostic_entry(diagnostics, :version) { browser.version }
+      diagnostic_entry(diagnostics, :current_browser) { probe_webgl(browser) }
       {
         minimal: %w[--no-sandbox --enable-webgl --enable-unsafe-swiftshader],
         swiftshader_webgl: %w[
@@ -119,16 +135,30 @@ RSpec.describe "Litematic attachment previews", litematic_webgl: true do
           --enable-unsafe-swiftshader
         ],
       }.each do |name, arguments|
-        browser
-          .browser_type
-          .launch(channel: "chromium", headless: true, args: arguments, timeout: 15_000) do |probe|
-            diagnostics[name] = probe_webgl(probe)
-          end
+        diagnostic_entry(diagnostics, name) do
+          result = nil
+          browser
+            .browser_type
+            .launch(
+              channel: "chromium",
+              headless: true,
+              args: arguments,
+              timeout: 15_000,
+            ) { |probe| result = probe_webgl(probe) }
+          result
+        end
+      end
+      diagnostic_entry(diagnostics, :gpu) do
+        browser_diagnostic(browser, "SystemInfo.getInfo")["gpu"].slice(
+          "devices",
+          "featureStatus",
+          "auxAttributes",
+        )
+      end
+      diagnostic_entry(diagnostics, :arguments) do
+        browser_diagnostic(browser, "Browser.getBrowserCommandLine")["arguments"]
       end
     end
-    diagnostics
-  rescue Playwright::Error => error
-    diagnostics[:probe_error] = error.message
     diagnostics
   ensure
     warn "Litematic WebGL diagnostics:\n#{JSON.pretty_generate(diagnostics)}"
