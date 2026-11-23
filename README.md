@@ -66,7 +66,7 @@ pnpm test:browser
 
 `pnpm test` 检查附件识别、原始链接保留、重复装饰、消息来源校验、下载限额、超时和清理。浏览器测试使用独立测试页加载生产模块，覆盖真实 iframe 通信；该测试页不代替完整 Discourse 测试。
 
-`spec/system/litematic_viewer_spec.rb` 在 Discourse 官方主题 CI 中验证实际帖子和原生弹窗。外部查看器和附件响应使用模拟服务，测试无需依赖公共查看器在线。
+`spec/system/litematic_viewer_spec.rb` 在 Discourse 官方主题 CI 中验证实际帖子和原生弹窗。成功路径使用 Discourse 实际存储和提供的 gzip 附件；外部查看器与下载失败响应使用模拟服务，测试无需依赖公共查看器在线。
 
 安装到测试论坛后，还应使用实际 S3/CDN、私有分类以及社区常用的大小投影检查存储和模型兼容性。支持通过 `LIVE_VIEWER=1 pnpm test:browser` 运行公共查看器烟雾测试（需要网络/WebGL，具体命令见浏览器测试配置）。
 

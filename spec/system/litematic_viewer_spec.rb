@@ -1,16 +1,20 @@
 # frozen_string_literal: true
 
 require "base64"
+require "tempfile"
 
 RSpec.describe "Litematic attachment previews" do
   let(:schematic) do
-    Fabricate(
-      :upload,
-      original_filename: "starter-house.litematic",
-      extension: "litematic",
-      width: nil,
-      height: nil,
-    )
+    Tempfile.create(%w[starter-house .litematic]) do |file|
+      file.binmode
+      file.write(schematic_bytes)
+      file.flush
+      file.rewind
+      upload = UploadCreator.new(file, "starter-house.litematic").create_for(Fabricate(:user).id)
+      raise upload.errors.full_messages.join(", ") unless upload.persisted?
+
+      upload
+    end
   end
   let(:document) do
     Fabricate(
@@ -33,9 +37,8 @@ RSpec.describe "Litematic attachment previews" do
   let(:download_requests) { [] }
   let(:download_status) { 200 }
 
-  # A gzip-compressed, single-region Litematic v6 containing one stone block.
-  # The viewer is mocked: these tests cover Discourse integration and file
-  # handoff, while renderer compatibility is verified separately.
+  # A gzip-compressed Litematic v6 with one stone block, stored and served by
+  # Discourse. Only the remote viewer is mocked in this integration spec.
   let(:schematic_bytes) do
     Base64.strict_decode64(
       "H4sIAAAAAAAACn2QTWrDQAyFnxmTOOOGEugBco7u+rd0G+qQveKqyVBbAo8MbW7QWxfHzs+q2gie9D2e5AGH6YbbGFQATBx82W0vQuJwVwThqqVPeyaj82j+65EVbPRBRhnSV2oYszfhZTQVzjB56GyvLfL1nhteGkeLDvk774LKk3Zig3++VqP6sdbqK14rG627hnvFY/4iVa0xyK4MB3ZIvofN5Gfsh74DHtPBP3qkBQXxyFYagwWVkcJIYaR6KP3XdYbFMV1pZLyims3Y95PT1bfN6UP3x9txg/xCxCHauf4ASToYp3QBAAA=",
@@ -48,6 +51,7 @@ RSpec.describe "Litematic attachment previews" do
         <title>Test schematic viewer</title>
         <body>
           <p id="loaded-file"></p>
+          <p id="received-data"></p>
           <script>
             const params = new URLSearchParams(location.search);
             const origin = params.get("parentOrigin");
@@ -61,7 +65,12 @@ RSpec.describe "Litematic attachment previews" do
               }
               if (event.data.type === "load") {
                 document.getElementById("loaded-file").textContent = event.data.file.name;
-                send("loaded");
+                event.data.file.arrayBuffer().then((buffer) => {
+                  const bytes = new Uint8Array(buffer);
+                  document.getElementById("received-data").textContent =
+                    `${bytes.length}:${Array.from(bytes.slice(0, 3)).join(",")}`;
+                  send("loaded");
+                });
               }
             });
             send("ready");
@@ -87,11 +96,11 @@ RSpec.describe "Litematic attachment previews" do
         %r{/uploads/short-url/[^/?]+\.litematic(?:\?|$)},
         lambda do |route, request|
           download_requests << request.url
-          route.fulfill(
-            status: download_status,
-            contentType: "application/octet-stream",
-            body: schematic_bytes,
-          )
+          if download_status == 200
+            route.continue
+          else
+            route.fulfill(status: download_status, contentType: "text/plain", body: "Forbidden")
+          end
         end,
       )
     end
@@ -132,6 +141,7 @@ RSpec.describe "Litematic attachment previews" do
     end
     within_frame(find(".litematic-preview__stage iframe")) do
       expect(page).to have_css("#loaded-file", text: schematic.original_filename)
+      expect(page).to have_css("#received-data", text: "#{schematic_bytes.bytesize}:31,139,8")
     end
     expect(viewer_requests.size).to eq(1)
     expect(download_requests.size).to eq(1)
