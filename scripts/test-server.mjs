@@ -18,11 +18,19 @@ const server = createServer(async (request, response) => {
     const url = new URL(request.url, `http://localhost:${port}`);
     if (url.pathname === "/uploads/short-url/pavilion") {
       const bytes = createLitematicFixture();
-      response.writeHead(200, {
-        "Content-Type": "application/octet-stream",
-        "Content-Length": bytes.length,
-      });
-      response.end(bytes);
+      const send = () => {
+        response.writeHead(200, {
+          "Content-Type": "application/octet-stream",
+          "Content-Length": bytes.length,
+        });
+        response.end(bytes);
+      };
+      if (url.searchParams.has("slow")) {
+        const timer = setTimeout(send, 1500);
+        response.on("close", () => clearTimeout(timer));
+      } else {
+        send();
+      }
       return;
     }
     if (url.pathname === "/theme.css") {
@@ -37,7 +45,7 @@ const server = createServer(async (request, response) => {
     if (
       relative.startsWith("..") ||
       path.isAbsolute(relative) ||
-      !/^(test[\\/]browser|javascripts)[\\/]/.test(relative)
+      !/^(test[\\/]browser|javascripts|assets)[\\/]/.test(relative)
     ) {
       response.writeHead(404).end();
       return;

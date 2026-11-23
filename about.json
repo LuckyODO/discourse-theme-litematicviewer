@@ -4,9 +4,12 @@
   "authors": "LuckyODO",
   "about_url": "https://github.com/LuckyODO/discourse-theme-litematicviewer",
   "license_url": "https://github.com/LuckyODO/discourse-theme-litematicviewer/blob/main/LICENSE",
-  "theme_version": "1.0.0",
+  "theme_version": "2.0.0",
   "minimum_discourse_version": "2026.10.0-latest",
   "maximum_discourse_version": null,
-  "assets": {},
+  "assets": {
+    "litematic_renderer": "assets/litematic-renderer.js",
+    "litematic_worker": "assets/litematic-worker.js"
+  },
   "modifiers": {}
 }

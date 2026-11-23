@@ -1,7 +1,13 @@
-const PROTOCOL = "litematic-preview-v1";
 const VIEWER_MAX_BYTES = 64 * 1024 * 1024;
-const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 const GZIP_PREFIX = [0x1f, 0x8b, 0x08];
+const ERROR_CATEGORIES = new Set([
+  "invalid",
+  "too_complex",
+  "unsupported",
+  "graphics",
+  "viewer",
+  "timeout",
+]);
 
 class PreviewError extends Error {
   constructor(category) {
@@ -10,7 +16,7 @@ class PreviewError extends Error {
   }
 }
 
-function checkedURL(value, base, viewer = false) {
+function checkedURL(value, base) {
   if (typeof value !== "string" || !value.trim()) {
     throw new PreviewError("configuration");
   }
@@ -19,8 +25,7 @@ function checkedURL(value, base, viewer = false) {
     !["https:", "http:"].includes(url.protocol) ||
     url.username ||
     url.password ||
-    (base.protocol === "https:" && url.protocol !== "https:") ||
-    (viewer && url.protocol !== "https:" && !LOCAL_HOSTS.has(url.hostname))
+    (base.protocol === "https:" && url.protocol !== "https:")
   ) {
     throw new PreviewError("configuration");
   }
@@ -31,28 +36,21 @@ function percent(value) {
   return Math.max(0, Math.min(100, value));
 }
 
-/** Owns one authenticated download and one isolated viewer, until destroyed. */
+/** One bounded attachment download and an on-demand, locally bundled renderer. */
 export function createViewerSession({
   container,
   url,
-  name,
-  viewerUrl,
+  workerUrl,
+  loadRenderer,
+  labels,
+  theme = "auto",
   maxBytes = VIEWER_MAX_BYTES,
-  timeoutMs = 60000,
-  lang = "en",
-  theme = "light",
-  title,
+  timeoutMs = 90000,
   onStatus,
-  onClose,
 }) {
   const controller = new AbortController();
-  let iframe;
   let viewer;
   let timer;
-  let channel;
-  let file;
-  let viewerReady = false;
-  let sent = false;
   let stopped = false;
   let phase = "download";
 
@@ -67,11 +65,8 @@ export function createViewerSession({
     stopped = true;
     controller.abort();
     clearTimeout(timer);
-    window.removeEventListener("message", receive);
-    document.removeEventListener("visibilitychange", visibilityChanged);
-    iframe?.remove();
-    iframe = undefined;
-    file = undefined;
+    viewer?.destroy();
+    viewer = undefined;
   }
 
   function fail(category) {
@@ -80,85 +75,6 @@ export function createViewerSession({
     }
     destroy();
     status("error", { error: category });
-  }
-
-  function post(message) {
-    if (!stopped && viewerReady) {
-      iframe.contentWindow.postMessage(
-        { protocol: PROTOCOL, channel, ...message },
-        viewer.origin
-      );
-    }
-  }
-
-  function visibilityChanged() {
-    try {
-      post({ type: "active", active: !document.hidden });
-    } catch {
-      fail("viewer");
-    }
-  }
-
-  function loadWhenReady() {
-    if (stopped || !viewerReady || !file || sent) {
-      return;
-    }
-    sent = true;
-    phase = "viewer";
-    try {
-      post({
-        type: "configure",
-        options: {
-          lang,
-          theme,
-          viewer: {
-            header: false,
-            panels: { file: false },
-            tools: { catalog: false, export: false, help: false, packs: false },
-          },
-        },
-      });
-      post({ type: "active", active: !document.hidden });
-      post({ type: "load", file });
-      file = undefined;
-      status("loading", { progress: 0 });
-    } catch {
-      fail("viewer");
-    }
-  }
-
-  function receive(event) {
-    const data = event.data;
-    if (
-      stopped ||
-      !iframe ||
-      event.source !== iframe.contentWindow ||
-      event.origin !== viewer.origin ||
-      data?.protocol !== PROTOCOL ||
-      data.channel !== channel
-    ) {
-      return;
-    }
-    if (data.type === "ready") {
-      viewerReady = true;
-      loadWhenReady();
-    } else if (data.type === "close-request") {
-      destroy();
-      onClose?.();
-    } else if (data.type === "error") {
-      phase = "viewer";
-      fail("viewer");
-    } else if (sent && data.type === "loaded") {
-      clearTimeout(timer);
-      status("ready", { progress: 100 });
-    } else if (sent && data.type === "loading") {
-      status(
-        "loading",
-        Number.isFinite(data.progress)
-          ? { progress: percent(data.progress * 100) }
-          : {}
-      );
-    }
   }
 
   async function download(source, limit) {
@@ -208,7 +124,7 @@ export function createViewerSession({
           if (size > limit) {
             throw new PreviewError("too_large");
           }
-          // Check only the compression signature; the viewer parses the NBT.
+          // The worker validates the complete gzip stream and NBT.
           for (
             let index = 0;
             index < value.byteLength && prefixBytes < GZIP_PREFIX.length;
@@ -242,12 +158,13 @@ export function createViewerSession({
       if (prefixBytes !== GZIP_PREFIX.length) {
         throw new PreviewError("invalid");
       }
-      file = new File(chunks, name || "schematic.litematic", {
-        type: "application/octet-stream",
-      });
-      phase = "viewer";
-      status("loading");
-      loadWhenReady();
+      const bytes = new Uint8Array(size);
+      let offset = 0;
+      for (const chunk of chunks) {
+        bytes.set(chunk, offset);
+        offset += chunk.byteLength;
+      }
+      return bytes.buffer;
     } catch (error) {
       if (!stopped) {
         fail(error instanceof PreviewError ? error.category : "download");
@@ -255,54 +172,66 @@ export function createViewerSession({
     }
   }
 
-  try {
-    const base = new URL(window.location.href);
-    const source = checkedURL(url, base);
-    viewer = checkedURL(viewerUrl, base, true);
-    if (
-      !Number.isFinite(maxBytes) ||
-      maxBytes <= 0 ||
-      !Number.isFinite(timeoutMs) ||
-      timeoutMs <= 0 ||
-      !["en", "zh"].includes(lang) ||
-      !["light", "dark", "auto"].includes(theme) ||
-      !container?.appendChild
-    ) {
-      throw new PreviewError("configuration");
+  async function start() {
+    let source;
+    let worker;
+    try {
+      const base = new URL(window.location.href);
+      source = checkedURL(url, base);
+      worker = checkedURL(workerUrl, base);
+      if (
+        worker.origin !== base.origin ||
+        typeof loadRenderer !== "function" ||
+        !Number.isFinite(maxBytes) ||
+        maxBytes <= 0 ||
+        !Number.isFinite(timeoutMs) ||
+        timeoutMs <= 0 ||
+        !["light", "dark", "auto"].includes(theme) ||
+        !container?.appendChild
+      ) {
+        throw new PreviewError("configuration");
+      }
+    } catch {
+      fail("configuration");
+      return;
     }
-    if (viewer.pathname.endsWith("/")) {
-      viewer.pathname += "index.html";
-    }
-    viewer.hash = "";
-    viewer.searchParams.delete("file");
-    viewer.searchParams.delete("appearance");
-    channel = crypto.randomUUID();
-    viewer.searchParams.set("embedded", "1");
-    viewer.searchParams.set("parentOrigin", base.origin);
-    viewer.searchParams.set("channel", channel);
-    viewer.searchParams.set("lang", lang);
-    viewer.searchParams.set("pack", "vanilla");
-
-    iframe = document.createElement("iframe");
-    iframe.title = title || name || "Litematic 3D preview";
-    iframe.className = "litematic-viewer-frame";
-    iframe.referrerPolicy = "no-referrer";
-    iframe.setAttribute(
-      "sandbox",
-      "allow-scripts allow-same-origin allow-downloads"
-    );
-    iframe.setAttribute("allow", "fullscreen");
-    iframe.src = viewer.href;
-
-    window.addEventListener("message", receive);
-    document.addEventListener("visibilitychange", visibilityChanged);
     timer = setTimeout(() => fail("timeout"), timeoutMs);
-    container.appendChild(iframe);
     status("loading", { progress: 0 });
-    download(source, Math.min(maxBytes, VIEWER_MAX_BYTES));
-  } catch {
-    fail("configuration");
+    try {
+      // Both begin only after a click. Code is browser-cacheable; parsed files aren't retained.
+      const [buffer, renderer] = await Promise.all([
+        download(source, Math.min(maxBytes, VIEWER_MAX_BYTES)),
+        loadRenderer(),
+      ]);
+      if (stopped) {
+        return;
+      }
+      phase = "viewer";
+      status("loading");
+      viewer = renderer.create({
+        container,
+        buffer,
+        workerUrl: worker.href,
+        theme,
+        labels,
+        onReady: () => {
+          if (!stopped) {
+            clearTimeout(timer);
+            status("ready", { progress: 100 });
+          }
+        },
+        onError: (category) =>
+          fail(ERROR_CATEGORIES.has(category) ? category : "viewer"),
+      });
+      // A graphics failure may call onError synchronously during construction.
+      if (stopped) {
+        viewer?.destroy();
+      }
+    } catch {
+      fail("viewer");
+    }
   }
 
+  start();
   return { destroy };
 }

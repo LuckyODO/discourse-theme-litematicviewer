@@ -19,6 +19,7 @@ jobs:
           node-version: "24"
       - run: npm install --global pnpm@12.11.2
       - run: pnpm install --frozen-lockfile
+      - run: pnpm build:viewer && git diff --exit-code -- assets
       - run: pnpm test
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm test:browser

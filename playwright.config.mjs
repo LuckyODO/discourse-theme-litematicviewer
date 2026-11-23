@@ -3,7 +3,7 @@ import { defineConfig, devices } from "@playwright/test";
 export default defineConfig({
   testDir: "./test/browser",
   testMatch: "**/*.spec.mjs",
-  timeout: process.env.LIVE_VIEWER ? 150000 : 15000,
+  timeout: 30000,
   fullyParallel: false,
   workers: 1,
   reporter: "list",

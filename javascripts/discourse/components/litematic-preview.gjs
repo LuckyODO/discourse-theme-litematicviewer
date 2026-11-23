@@ -2,6 +2,7 @@ import Component from "@glimmer/component";
 import { tracked } from "@glimmer/tracking";
 import { action } from "@ember/object";
 import { modifier } from "ember-modifier";
+import loadScript from "discourse/lib/load-script";
 import DButton from "discourse/ui-kit/d-button";
 import DModal from "discourse/ui-kit/d-modal";
 import { i18n } from "discourse-i18n";
@@ -60,19 +61,35 @@ export default class LitematicPreview extends Component {
       return;
     }
 
-    const { viewerUrl, maxBytes, timeoutMs, name, theme } = this.args.model;
-    const locale = document.documentElement.lang || "en";
+    const { rendererUrl, workerUrl, maxBytes, timeoutMs, theme } =
+      this.args.model;
+    const labels = Object.fromEntries(
+      [
+        "canvas_label",
+        "reset",
+        "zoom_in",
+        "zoom_out",
+        "layer",
+        "all_layers",
+        "materials",
+        "more_materials",
+        "blocks",
+        "dimensions",
+        "basic_models",
+      ].map((key) => [key, i18n(themePrefix(`litematic.${key}`))])
+    );
     this.session = createViewerSession({
       container: this.stage,
       url: this.downloadUrl,
-      name,
-      viewerUrl,
+      workerUrl,
+      loadRenderer: async () => {
+        await loadScript(rendererUrl);
+        return window.DiscourseLitematic;
+      },
       maxBytes,
       timeoutMs,
-      lang: locale.toLowerCase().startsWith("zh") ? "zh" : "en",
       theme,
-      title: i18n(themePrefix("litematic.frame_title"), { name }),
-      onClose: () => this.args.closeModal(),
+      labels,
       onStatus: ({ state, phase, progress, error }) => {
         if (this.isDestroying) {
           return;

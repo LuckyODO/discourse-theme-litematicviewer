@@ -1,7 +1,5 @@
 enabled:
   default: true
-viewer_url:
-  default: "https://lwv.loafing.club/index.html"
 max_preview_size_mb:
   default: 32
   min: 1

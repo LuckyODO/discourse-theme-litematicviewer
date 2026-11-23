@@ -13,12 +13,36 @@ const progress = document.querySelector("#progress");
 const retry = document.querySelector("#retry");
 let session;
 let selected;
+let rendererPromise;
 window.previewEvents = [];
+
+function loadRenderer() {
+  if (window.DiscourseLitematic) {
+    return Promise.resolve(window.DiscourseLitematic);
+  }
+  if (!rendererPromise) {
+    rendererPromise = new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = "/assets/litematic-renderer.js";
+      script.onload = () => resolve(window.DiscourseLitematic);
+      script.onerror = () => {
+        script.remove();
+        rendererPromise = undefined;
+        reject(new Error("The bundled renderer could not be loaded"));
+      };
+      document.head.append(script);
+    });
+  }
+  return rendererPromise;
+}
 
 function close() {
   session?.destroy();
   session = undefined;
   modal.close();
+  selected?.anchor.parentElement
+    ?.querySelector(".litematic-attachment__preview")
+    ?.focus();
 }
 
 function open(item) {
@@ -32,18 +56,31 @@ function open(item) {
   if (!modal.open) {
     modal.showModal();
   }
+  const source = new URL(attachmentURL(anchor));
+  if (params.has("slow")) {
+    source.searchParams.set("slow", "1");
+  }
   session = createViewerSession({
     container: stage,
-    url: attachmentURL(anchor),
-    name,
-    viewerUrl: params.has("live")
-      ? "https://lwv.loafing.club/index.html"
-      : `http://127.0.0.1:${location.port}/test/browser/mock-viewer.html?mode=${params.get("mode") || "success"}`,
+    url: source.href,
+    workerUrl: "/assets/litematic-worker.js",
+    loadRenderer,
     maxBytes: params.has("small") ? 16 : 32 * 1024 * 1024,
     timeoutMs: params.has("timeout") ? 300 : 90000,
-    lang: "zh",
     theme: "light",
-    onClose: close,
+    labels: {
+      canvas_label: "可交互的 3D 预览",
+      reset: "重置视角",
+      zoom_in: "放大",
+      zoom_out: "缩小",
+      layer: "分层",
+      all_layers: "全部层",
+      materials: "材料",
+      more_materials: "种其他方块",
+      blocks: "个方块",
+      dimensions: "尺寸",
+      basic_models: "基础模型 · 部分方块已简化",
+    },
     onStatus(event) {
       window.previewEvents.push(event);
       modal.dataset.state = event.state;

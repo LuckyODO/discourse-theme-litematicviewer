@@ -13,69 +13,18 @@ const source = await readFile(
 const { createViewerSession } = await import(
   `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`
 );
-const PROTOCOL = "litematic-preview-v1";
 const GZIP_BYTES = new Uint8Array([0x1f, 0x8b, 0x08, 0x00]);
 
-function eventTarget() {
-  const listeners = new Map();
-  return {
-    addEventListener(type, listener) {
-      if (!listeners.has(type)) {
-        listeners.set(type, new Set());
-      }
-      listeners.get(type).add(listener);
-    },
-    removeEventListener(type, listener) {
-      listeners.get(type)?.delete(listener);
-    },
-    emit(type, event = {}) {
-      for (const listener of listeners.get(type) || []) {
-        listener(event);
-      }
-    },
-    count(type) {
-      return listeners.get(type)?.size || 0;
-    },
-  };
-}
-
-function harness(t, fetchResponse = () => new Response(GZIP_BYTES)) {
-  const statuses = [];
-  const requests = [];
-  const messages = [];
-  const frames = [];
-  let closeCalls = 0;
-  const window = {
-    ...eventTarget(),
-    location: new URL("https://forum.example/t/build/123"),
-  };
-  const document = {
-    ...eventTarget(),
-    hidden: false,
-    createElement(tag) {
-      assert.equal(tag, "iframe");
-      return {
-        attributes: {},
-        setAttribute(key, value) {
-          this.attributes[key] = value;
-        },
-        contentWindow: {
-          postMessage(payload, origin) {
-            messages.push({ payload, origin });
-          },
-        },
-        remove() {
-          this.removed = true;
-        },
-      };
-    },
-  };
+function harness(t, response = () => new Response(GZIP_BYTES)) {
+  const statuses = [],
+    requests = [],
+    viewers = [];
+  let scriptLoads = 0;
   const globals = {
-    window,
-    document,
+    window: { location: new URL("https://forum.example/t/build/123") },
     fetch: async (...args) => {
       requests.push(args);
-      return fetchResponse(...args);
+      return response(...args);
     },
   };
   const originals = Object.fromEntries(
@@ -86,6 +35,19 @@ function harness(t, fetchResponse = () => new Response(GZIP_BYTES)) {
   );
   Object.assign(globalThis, globals);
   let session;
+  const renderer = {
+    create(options) {
+      const viewer = {
+        options,
+        destroyed: false,
+        destroy() {
+          this.destroyed = true;
+        },
+      };
+      viewers.push(viewer);
+      return viewer;
+    },
+  };
   t.after(() => {
     session?.destroy();
     for (const [key, descriptor] of Object.entries(originals)) {
@@ -96,103 +58,49 @@ function harness(t, fetchResponse = () => new Response(GZIP_BYTES)) {
       }
     }
   });
-  const start = (options = {}) => {
-    session = createViewerSession({
-      container: { appendChild: (frame) => frames.push(frame) },
-      url: "/uploads/example.litematic",
-      name: "My build.litematic",
-      viewerUrl: "https://viewer.example/",
-      maxBytes: 1024,
-      onStatus: (value) => statuses.push(value),
-      onClose: () => closeCalls++,
-      ...options,
-    });
-    return session;
-  };
-  function receive(type, details = {}, overrides = {}) {
-    const frame = frames[0];
-    const viewer = new URL(frame.src);
-    window.emit("message", {
-      source: frame.contentWindow,
-      origin: viewer.origin,
-      data: {
-        protocol: PROTOCOL,
-        channel: viewer.searchParams.get("channel"),
-        type,
-        ...details,
-      },
-      ...overrides,
-    });
-  }
   return {
-    start,
-    receive,
-    window,
-    document,
     statuses,
     requests,
-    messages,
-    frames,
-    closeCalls: () => closeCalls,
+    viewers,
+    renderer,
+    scriptLoads: () => scriptLoads,
+    start(options = {}) {
+      session = createViewerSession({
+        container: { appendChild() {} },
+        url: "/uploads/build.litematic",
+        workerUrl: "/theme-javascripts/worker.js",
+        maxBytes: 1024,
+        loadRenderer: async () => {
+          scriptLoads++;
+          return renderer;
+        },
+        onStatus: (value) => statuses.push(value),
+        ...options,
+      });
+      return session;
+    },
   };
 }
-
 async function settle() {
   await setImmediate();
   await setImmediate();
 }
 
-test("waits for a trusted handshake, then sends one named file with safe options", async (t) => {
+test("loads local renderer once on demand and sends exact bytes to a same-origin worker", async (t) => {
   const h = harness(t);
+  assert.equal(h.scriptLoads(), 0);
   h.start();
   await settle();
-  assert.equal(h.messages.length, 0);
-  const iframe = h.frames[0];
-  const viewer = new URL(iframe.src);
-  assert.equal(viewer.pathname, "/index.html");
-  assert.equal(viewer.searchParams.get("embedded"), "1");
+  assert.equal(h.scriptLoads(), 1);
+  assert.equal(h.viewers.length, 1);
   assert.equal(
-    viewer.searchParams.get("parentOrigin"),
-    "https://forum.example"
+    h.viewers[0].options.workerUrl,
+    "https://forum.example/theme-javascripts/worker.js"
   );
-  assert.equal(viewer.searchParams.has("file"), false);
-  assert.equal(iframe.referrerPolicy, "no-referrer");
-  assert.equal(
-    iframe.attributes.sandbox,
-    "allow-scripts allow-same-origin allow-downloads"
-  );
+  assert.deepEqual(new Uint8Array(h.viewers[0].options.buffer), GZIP_BYTES);
   assert.equal(h.requests[0][1].credentials, "same-origin");
   assert.equal(h.requests[0][1].referrerPolicy, "no-referrer");
-
-  h.receive("ready", {}, { origin: "https://attacker.example" });
-  h.receive("ready", {}, { source: {} });
-  h.receive("ready", { protocol: "another-protocol" });
-  h.receive("ready", { channel: "another-channel" });
-  assert.equal(h.messages.length, 0);
-
-  h.receive("ready");
-  h.receive("ready");
-  const sent = h.messages.filter(({ payload }) => payload.type === "load");
-  assert.equal(sent.length, 1);
-  assert.equal(sent[0].origin, "https://viewer.example");
-  assert.equal(sent[0].payload.file.name, "My build.litematic");
-  assert.deepEqual(
-    [...new Uint8Array(await sent[0].payload.file.arrayBuffer())],
-    [...GZIP_BYTES]
-  );
-  const configure = h.messages.find(
-    ({ payload }) => payload.type === "configure"
-  );
-  assert.equal(configure.payload.options.viewer.panels.file, false);
-  assert.equal(configure.payload.options.viewer.tools.help, false);
-
-  h.receive("loading", { progress: 0.25, message: "untrusted remote text" });
-  assert.deepEqual(h.statuses.at(-1), {
-    state: "loading",
-    phase: "viewer",
-    progress: 25,
-  });
-  h.receive("loaded");
+  h.viewers[0].options.onReady();
   assert.deepEqual(h.statuses.at(-1), {
     state: "ready",
     phase: "viewer",
@@ -200,7 +108,7 @@ test("waits for a trusted handshake, then sends one named file with safe options
   });
 });
 
-test("a ready iframe waits for the download; external downloads omit credentials", async (t) => {
+test("cross-origin storage omits credentials; renderer waits for attachment", async (t) => {
   let finish;
   const h = harness(
     t,
@@ -209,175 +117,105 @@ test("a ready iframe waits for the download; external downloads omit credentials
         finish = resolve;
       })
   );
-  h.start({ url: "https://uploads.example/example.litematic" });
-  h.receive("ready");
-  assert.equal(h.messages.length, 0);
+  h.start({ url: "https://uploads.example/file" });
+  await settle();
+  assert.equal(h.viewers.length, 0);
   assert.equal(h.requests[0][1].credentials, "omit");
   finish(new Response(GZIP_BYTES));
   await settle();
-  assert.equal(
-    h.messages.filter(({ payload }) => payload.type === "load").length,
-    1
-  );
+  assert.equal(h.viewers.length, 1);
 });
 
-test("streamed size enforcement stops a response with no Content-Length", async (t) => {
-  let cancelled = false;
-  const h = harness(
-    t,
-    () =>
-      new Response(
-        new ReadableStream({
-          start(controller) {
-            controller.enqueue(new Uint8Array([...GZIP_BYTES, 0]));
-            controller.enqueue(new Uint8Array(5));
-          },
-          cancel() {
-            cancelled = true;
-          },
-        })
-      )
-  );
-  h.start({ maxBytes: 8 });
-  h.receive("ready");
-  await settle();
-  assert.equal(h.statuses.at(-1).error, "too_large");
-  assert.equal(cancelled, true);
-  assert.equal(h.frames[0].removed, true);
-  assert.equal(h.requests[0][1].signal.aborted, true);
-  assert.equal(h.messages.length, 0);
-});
-
-test("streamed size enforcement does not trust a smaller Content-Length", async (t) => {
-  const h = harness(
-    t,
-    () =>
-      new Response(new Uint8Array(10), {
-        headers: { "Content-Length": "1" },
-      })
-  );
-  h.start({ maxBytes: 8 });
-  await settle();
-  assert.equal(h.statuses.at(-1).error, "too_large");
-});
-
-test("accepts a gzip signature split across chunks without altering the file", async (t) => {
-  const h = harness(
-    t,
-    () =>
-      new Response(
-        new ReadableStream({
-          start(controller) {
-            controller.enqueue(new Uint8Array());
-            controller.enqueue(GZIP_BYTES.subarray(0, 1));
-            controller.enqueue(GZIP_BYTES.subarray(1, 2));
-            controller.enqueue(GZIP_BYTES.subarray(2));
-            controller.close();
-          },
-        })
-      )
-  );
-  h.start();
-  h.receive("ready");
-  await settle();
-  const load = h.messages.find(({ payload }) => payload.type === "load");
-  assert.ok(load);
-  assert.deepEqual(
-    new Uint8Array(await load.payload.file.arrayBuffer()),
-    GZIP_BYTES
-  );
-});
-
-for (const [label, data] of [
-  ["HTML with an octet-stream content type", "<html>private page</html>"],
-  ["JSON with an octet-stream content type", '{"private":"data"}'],
-  ["an incomplete gzip signature", new Uint8Array([0x1f, 0x8b])],
-  ["an invalid gzip compression method", new Uint8Array([0x1f, 0x8b, 0x00])],
-]) {
-  test(`rejects ${label} before sending bytes to the viewer`, async (t) => {
-    const h = harness(
-      t,
-      () =>
-        new Response(data, {
-          headers: { "Content-Type": "application/octet-stream" },
-        })
-    );
-    h.start();
-    h.receive("ready");
-    await settle();
-    assert.deepEqual(h.statuses.at(-1), {
-      state: "error",
-      phase: "download",
-      error: "invalid",
+test("enforces streamed size even without or with a misleading Content-Length", async (t) => {
+  for (const headers of [{}, { "Content-Length": "1" }]) {
+    await t.test(JSON.stringify(headers), async (sub) => {
+      let cancelled = false;
+      const h = harness(
+        sub,
+        () =>
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(GZIP_BYTES);
+                controller.enqueue(new Uint8Array(10));
+              },
+              cancel() {
+                cancelled = true;
+              },
+            }),
+            { headers }
+          )
+      );
+      h.start({ maxBytes: 8 });
+      await settle();
+      assert.equal(h.statuses.at(-1).error, "too_large");
+      assert.equal(cancelled, true);
+      assert.equal(h.requests[0][1].signal.aborted, true);
+      assert.equal(h.viewers.length, 0);
     });
-    assert.equal(h.messages.length, 0);
-    assert.equal(h.frames[0].removed, true);
-    assert.equal(h.requests[0][1].signal.aborted, true);
-  });
-}
+  }
+});
 
-test("download progress reports integer percent changes instead of every chunk", async (t) => {
-  const bytes = new Uint8Array(1000);
-  bytes.set(GZIP_BYTES);
+test("accepts gzip signature split across streamed chunks", async (t) => {
   const h = harness(
     t,
     () =>
       new Response(
         new ReadableStream({
           start(controller) {
-            for (let index = 0; index < bytes.length; index++) {
-              controller.enqueue(bytes.subarray(index, index + 1));
+            for (const byte of GZIP_BYTES) {
+              controller.enqueue(new Uint8Array([byte]));
             }
             controller.close();
           },
-        }),
-        { headers: { "Content-Length": String(bytes.length) } }
+        })
       )
   );
   h.start();
   await settle();
-  const progress = h.statuses
-    .filter((status) => status.phase === "download")
-    .map((status) => status.progress);
-  assert.equal(progress[0], 0);
-  assert.equal(progress.at(-1), 100);
-  assert.ok(progress.length <= 101);
-  assert.equal(new Set(progress).size, progress.length);
-  assert.ok(progress.every(Number.isInteger));
+  assert.deepEqual(new Uint8Array(h.viewers[0].options.buffer), GZIP_BYTES);
 });
 
 for (const [label, response, expected] of [
   [
-    "HTML login response",
+    "HTML login",
     () =>
-      new Response("<html>Sign in</html>", {
-        headers: { "Content-Type": "text/html; charset=utf-8" },
+      new Response("<html>secret</html>", {
+        headers: { "Content-Type": "text/html" },
       }),
     "download",
   ],
+  ["HTTP 403", () => new Response("Forbidden", { status: 403 }), "download"],
+  ["empty", () => new Response(new Uint8Array()), "empty"],
   [
-    "HTTP failure",
-    () => new Response("Forbidden", { status: 403 }),
-    "download",
-  ],
-  ["empty response", () => new Response(new Uint8Array()), "empty"],
-  [
-    "declared oversized response",
-    () =>
-      new Response(new Uint8Array([1]), {
-        headers: { "Content-Length": "2048" },
-      }),
+    "declared oversized",
+    () => new Response(GZIP_BYTES, { headers: { "Content-Length": "2048" } }),
     "too_large",
   ],
   [
-    "network failure",
+    "network error",
     () => {
-      throw new Error("private internal error");
+      throw new Error("private details");
     },
     "download",
   ],
+  [
+    "HTML disguised as binary",
+    () => new Response("<html>login</html>"),
+    "invalid",
+  ],
+  [
+    "truncated signature",
+    () => new Response(new Uint8Array([0x1f, 0x8b])),
+    "invalid",
+  ],
+  [
+    "wrong compression method",
+    () => new Response(new Uint8Array([0x1f, 0x8b, 0])),
+    "invalid",
+  ],
 ]) {
-  test(`handles ${label} without exposing response details`, async (t) => {
+  test(`rejects ${label} without passing it to renderer`, async (t) => {
     const h = harness(t, response);
     h.start();
     await settle();
@@ -386,52 +224,41 @@ for (const [label, response, expected] of [
       phase: "download",
       error: expected,
     });
-    assert.equal(h.frames[0].removed, true);
-    assert.equal(h.window.count("message"), 0);
-    assert.equal(h.document.count("visibilitychange"), 0);
+    assert.equal(h.viewers.length, 0);
+    assert.equal(h.requests[0][1].signal.aborted, true);
   });
 }
 
-test("maps viewer errors to a safe category and stops the session", async (t) => {
-  const h = harness(t);
+test("throttles streamed progress to integer percent changes", async (t) => {
+  const bytes = new Uint8Array(1000);
+  bytes.set(GZIP_BYTES);
+  const h = harness(
+    t,
+    () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            for (let i = 0; i < bytes.length; i++) {
+              controller.enqueue(bytes.subarray(i, i + 1));
+            }
+            controller.close();
+          },
+        }),
+        { headers: { "Content-Length": "1000" } }
+      )
+  );
   h.start();
-  h.receive("error", { message: "<script>untrusted</script>", code: "secret" });
   await settle();
-  assert.deepEqual(h.statuses.at(-1), {
-    state: "error",
-    phase: "viewer",
-    error: "viewer",
-  });
-  assert.equal(h.frames[0].removed, true);
+  const progress = h.statuses
+    .filter((s) => s.phase === "download")
+    .map((s) => s.progress);
+  assert.equal(progress[0], 0);
+  assert.equal(progress.at(-1), 100);
+  assert.ok(progress.length <= 101);
+  assert.equal(new Set(progress).size, progress.length);
 });
 
-test("overall timeout aborts the download and removes the frame", async (t) => {
-  const h = harness(t, () => new Promise(() => {}));
-  h.start({ timeoutMs: 10 });
-  await setTimeout(30);
-  assert.equal(h.statuses.at(-1).error, "timeout");
-  assert.equal(h.requests[0][1].signal.aborted, true);
-  assert.equal(h.frames[0].removed, true);
-});
-
-test("successful render cancels the timeout and follows page visibility", async (t) => {
-  const h = harness(t);
-  h.start({ timeoutMs: 30 });
-  await settle();
-  h.receive("ready");
-  h.receive("loaded");
-  h.document.hidden = true;
-  h.document.emit("visibilitychange");
-  assert.equal(h.messages.at(-1).payload.type, "active");
-  assert.equal(h.messages.at(-1).payload.active, false);
-  h.document.hidden = false;
-  h.document.emit("visibilitychange");
-  assert.equal(h.messages.at(-1).payload.active, true);
-  await setTimeout(45);
-  assert.equal(h.statuses.at(-1).state, "ready");
-});
-
-test("destroy prevents later download completion or iframe messages from updating UI", async (t) => {
+test("close during download aborts and prevents late render construction", async (t) => {
   let finish;
   const h = harness(
     t,
@@ -444,55 +271,105 @@ test("destroy prevents later download completion or iframe messages from updatin
   session.destroy();
   session.destroy();
   const count = h.statuses.length;
-  finish(new Response(new Uint8Array([1])));
-  h.receive("ready");
+  finish(new Response(GZIP_BYTES));
   await settle();
+  assert.equal(h.viewers.length, 0);
   assert.equal(h.statuses.length, count);
-  assert.equal(h.messages.length, 0);
-  assert.equal(h.frames[0].removed, true);
-  assert.equal(h.window.count("message"), 0);
-  assert.equal(h.document.count("visibilitychange"), 0);
+  assert.equal(h.requests[0][1].signal.aborted, true);
 });
 
-test("a trusted close request disposes the session and calls onClose once", async (t) => {
+test("close during script loading prevents a late renderer", async (t) => {
+  let finish;
+  const h = harness(t);
+  const session = h.start({
+    loadRenderer: () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  });
+  await settle();
+  session.destroy();
+  finish(h.renderer);
+  await settle();
+  assert.equal(h.viewers.length, 0);
+});
+
+test("timeout aborts outstanding download", async (t) => {
+  const h = harness(t, () => new Promise(() => {}));
+  h.start({ timeoutMs: 10 });
+  await setTimeout(30);
+  assert.equal(h.statuses.at(-1).error, "timeout");
+  assert.equal(h.requests[0][1].signal.aborted, true);
+});
+
+test("successful first render cancels timeout; closing disposes the renderer", async (t) => {
+  const h = harness(t);
+  const session = h.start({ timeoutMs: 30 });
+  await settle();
+  h.viewers[0].options.onReady();
+  await setTimeout(45);
+  assert.equal(h.statuses.at(-1).state, "ready");
+  session.destroy();
+  assert.equal(h.viewers[0].destroyed, true);
+});
+
+test("renderer failure maps unknown messages to a safe category and disposes", async (t) => {
   const h = harness(t);
   h.start();
-  h.receive("close-request");
-  h.receive("close-request");
   await settle();
-  assert.equal(h.closeCalls(), 1);
-  assert.equal(h.frames[0].removed, true);
+  h.viewers[0].options.onError("private error details");
+  assert.equal(h.statuses.at(-1).error, "viewer");
+  assert.equal(h.viewers[0].destroyed, true);
+});
+
+test("synchronous graphics failure still disposes newly returned renderer", async (t) => {
+  const h = harness(t);
+  let destroyed = false;
+  h.start({
+    loadRenderer: async () => ({
+      create({ onError }) {
+        onError("graphics");
+        return {
+          destroy() {
+            destroyed = true;
+          },
+        };
+      },
+    }),
+  });
+  await settle();
+  assert.equal(h.statuses.at(-1).error, "graphics");
+  assert.equal(destroyed, true);
+});
+
+test("script load failure aborts the download", async (t) => {
+  const h = harness(t, () => new Promise(() => {}));
+  h.start({
+    loadRenderer: async () => {
+      throw new Error("failed script");
+    },
+  });
+  await settle();
+  assert.equal(h.statuses.at(-1).error, "viewer");
+  assert.equal(h.requests[0][1].signal.aborted, true);
 });
 
 for (const [label, options] of [
-  // eslint-disable-next-line no-script-url -- Verify rejection of executable attachment URLs.
-  ["non-HTTP attachment", { url: "javascript:alert(1)" }],
+  // eslint-disable-next-line no-script-url -- Verify rejection before any execution.
+  ["executable attachment", { url: "javascript:alert(1)" }],
   ["attachment credentials", { url: "https://user:pass@forum.example/file" }],
   ["mixed-content attachment", { url: "http://uploads.example/file" }],
-  ["mixed-content viewer", { viewerUrl: "http://viewer.example/" }],
-  ["viewer credentials", { viewerUrl: "https://user:pass@viewer.example/" }],
-  ["empty viewer", { viewerUrl: "" }],
-  ["empty attachment", { url: "" }],
-  ["invalid byte limit", { maxBytes: -1 }],
+  ["external worker", { workerUrl: "https://public-viewer.example/worker.js" }],
+  ["missing worker", { workerUrl: "" }],
+  ["missing attachment", { url: "" }],
+  ["invalid size limit", { maxBytes: -1 }],
+  ["invalid timeout", { timeoutMs: NaN }],
 ]) {
-  test(`rejects ${label} before creating a frame or downloading`, (t) => {
+  test(`rejects ${label} before loading assets or attachments`, (t) => {
     const h = harness(t);
     h.start(options);
     assert.equal(h.statuses.at(-1).error, "configuration");
-    assert.equal(h.frames.length, 0);
     assert.equal(h.requests.length, 0);
+    assert.equal(h.scriptLoads(), 0);
   });
 }
-
-test("allows an HTTP localhost viewer only from an HTTP development page", async (t) => {
-  const h = harness(t);
-  h.window.location = new URL("http://localhost:4200/t/example");
-  h.start({ viewerUrl: "http://127.0.0.1:5000/" });
-  await settle();
-  assert.equal(h.frames.length, 1);
-  h.receive("ready");
-  assert.equal(
-    h.messages.filter(({ payload }) => payload.type === "load").length,
-    1
-  );
-});

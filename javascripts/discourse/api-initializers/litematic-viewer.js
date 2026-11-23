@@ -27,7 +27,8 @@ export default apiInitializer((api) => {
             model: {
               anchor,
               name,
-              viewerUrl: settings.viewer_url,
+              rendererUrl: settings.theme_uploads_local.litematic_renderer,
+              workerUrl: settings.theme_uploads_local.litematic_worker,
               maxBytes: settings.max_preview_size_mb * 1024 * 1024,
               timeoutMs: settings.load_timeout_seconds * 1000,
               theme: settings.viewer_theme,

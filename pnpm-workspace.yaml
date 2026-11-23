@@ -5,3 +5,4 @@ minimumReleaseAgeExclude:
 strictPeerDependencies: true
 allowBuilds:
   "@parcel/watcher": false
+  esbuild: true

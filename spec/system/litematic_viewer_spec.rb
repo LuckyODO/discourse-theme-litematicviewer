@@ -33,63 +33,37 @@ RSpec.describe "Litematic attachment previews" do
         [An external schematic](https://example.com/external.litematic)
       MD
 
-  let(:viewer_requests) { [] }
+  let(:asset_requests) { [] }
+  let(:external_requests) { [] }
   let(:download_requests) { [] }
   let(:download_status) { 200 }
 
-  # A gzip-compressed Litematic v6 with one stone block, stored and served by
-  # Discourse. Only the remote viewer is mocked in this integration spec.
+  # A gzip-compressed Litematic v6 with one stone block. Discourse stores and
+  # serves the file; the bundled parser worker and WebGL renderer run normally.
   let(:schematic_bytes) do
     Base64.strict_decode64(
       "H4sIAAAAAAAACn2QTWrDQAyFnxmTOOOGEugBco7u+rd0G+qQveKqyVBbAo8MbW7QWxfHzs+q2gie9D2e5AGH6YbbGFQATBx82W0vQuJwVwThqqVPeyaj82j+65EVbPRBRhnSV2oYszfhZTQVzjB56GyvLfL1nhteGkeLDvk774LKk3Zig3++VqP6sdbqK14rG627hnvFY/4iVa0xyK4MB3ZIvofN5Gfsh74DHtPBP3qkBQXxyFYagwWVkcJIYaR6KP3XdYbFMV1pZLyims3Y95PT1bfN6UP3x9txg/xCxCHauf4ASToYp3QBAAA=",
     )
   end
 
-  let(:viewer_html) { <<~HTML }
-      <!doctype html>
-      <html lang="en">
-        <title>Test schematic viewer</title>
-        <body>
-          <p id="loaded-file"></p>
-          <p id="received-data"></p>
-          <script>
-            const params = new URLSearchParams(location.search);
-            const origin = params.get("parentOrigin");
-            const channel = params.get("channel");
-            const protocol = "litematic-preview-v1";
-            const send = (type) => parent.postMessage({ protocol, channel, type }, origin);
-            addEventListener("message", (event) => {
-              if (event.source !== parent || event.origin !== origin ||
-                  event.data?.protocol !== protocol || event.data.channel !== channel) {
-                return;
-              }
-              if (event.data.type === "load") {
-                document.getElementById("loaded-file").textContent = event.data.file.name;
-                event.data.file.arrayBuffer().then((buffer) => {
-                  const bytes = new Uint8Array(buffer);
-                  document.getElementById("received-data").textContent =
-                    `${bytes.length}:${Array.from(bytes.slice(0, 3)).join(",")}`;
-                  send("loaded");
-                });
-              }
-            });
-            send("ready");
-          </script>
-        </body>
-      </html>
-    HTML
-
   before do
     SiteSetting.authorized_extensions = "#{SiteSetting.authorized_extensions}|litematic|pdf"
     @theme = upload_theme_or_component
-    @theme.settings[:viewer_url].value = "https://litematic-viewer.test/index.html"
+    @asset_paths =
+      %w[litematic_renderer litematic_worker].map do |name|
+        URI(@theme.theme_fields.find_by!(name: name).javascript_cache.local_url).path
+      end
 
     page.driver.with_playwright_page do |browser_page|
-      browser_page.route(
-        "https://litematic-viewer.test/**",
-        lambda do |route, request|
-          viewer_requests << request.url
-          route.fulfill(status: 200, contentType: "text/html", body: viewer_html)
+      browser_page.on(
+        "request",
+        lambda do |request|
+          uri = URI(request.url)
+          asset_requests << uri.path if @asset_paths.include?(uri.path)
+          if %w[http https].include?(uri.scheme) &&
+               ![Capybara.server_host, "localhost", "test.localhost"].include?(uri.host)
+            external_requests << request.url
+          end
         end,
       )
       browser_page.route(
@@ -121,11 +95,11 @@ RSpec.describe "Litematic attachment previews" do
       href: "https://example.com/external.litematic",
     )
     expect(page).to have_no_css(".litematic-preview-modal")
-    expect(viewer_requests).to be_empty
+    expect(asset_requests).to be_empty
     expect(download_requests).to be_empty
   end
 
-  it "opens an accessible preview, passes the attachment, and releases the frame on close" do
+  it "renders the stored attachment locally and releases the preview on close" do
     visit post.topic.url
     find(".litematic-attachment__preview").click
 
@@ -134,22 +108,25 @@ RSpec.describe "Litematic attachment previews" do
       ".litematic-preview-modal .d-modal__title-text",
       text: schematic.original_filename,
     )
+    expect(page).to have_css(".litematic-model-summary", text: /1.*1 × 1 × 1/, wait: 20)
     expect(page).to have_no_css(".litematic-preview__status")
-    expect(page).to have_css(".litematic-preview__stage iframe", count: 1)
+    expect(page).to have_css(".litematic-preview__stage canvas", count: 1)
+    expect(page).to have_css(".litematic-layer")
+    expect(page).to have_button("Reset view")
     within ".litematic-preview-modal" do
       expect(page).to have_link("Download", href: /#{Regexp.escape(schematic.short_path)}\z/)
     end
-    within_frame(find(".litematic-preview__stage iframe")) do
-      expect(page).to have_css("#loaded-file", text: schematic.original_filename)
-      expect(page).to have_css("#received-data", text: "#{schematic_bytes.bytesize}:31,139,8")
-    end
-    expect(viewer_requests.size).to eq(1)
+    expect(find(".litematic-model-summary")["data-block-count"]).to eq("1")
+    expect(asset_requests.uniq).to match_array(@asset_paths)
+    expect(external_requests).to be_empty
     expect(download_requests.size).to eq(1)
+    find(".litematic-reset").click
+    expect(page).to have_css(".litematic-preview__stage canvas", count: 1)
 
     find(".litematic-preview-modal .modal-close").click
 
     expect(page).to have_no_css(".litematic-preview-modal")
-    expect(page).to have_no_css(".litematic-viewer-frame", visible: :all)
+    expect(page).to have_no_css(".litematic-preview__stage canvas", visible: :all)
     expect(
       page.evaluate_script(
         "document.activeElement.classList.contains('litematic-attachment__preview')",
@@ -158,14 +135,13 @@ RSpec.describe "Litematic attachment previews" do
 
     find(".litematic-attachment__preview").click
     expect(page).to have_css(".litematic-preview-modal[role='dialog']")
+    expect(page).to have_css(".litematic-model-summary", text: /1.*1 × 1 × 1/, wait: 20)
     expect(page).to have_no_css(".litematic-preview__status")
-    expect(page).to have_css(".litematic-preview__stage iframe", count: 1)
-    within_frame(find(".litematic-preview__stage iframe")) do
-      expect(page).to have_css("#loaded-file", text: schematic.original_filename)
-      expect(page).to have_css("#received-data", text: "#{schematic_bytes.bytesize}:31,139,8")
-    end
+    expect(page).to have_css(".litematic-preview__stage canvas", count: 1)
+    expect(find(".litematic-model-summary")["data-block-count"]).to eq("1")
+    expect(external_requests).to be_empty
     find(".litematic-preview-modal .modal-close").click
-    expect(page).to have_no_css(".litematic-viewer-frame", visible: :all)
+    expect(page).to have_no_css(".litematic-preview__stage canvas", visible: :all)
   end
 
   context "when an attachment cannot be downloaded" do
@@ -179,7 +155,7 @@ RSpec.describe "Litematic attachment previews" do
         expect(page).to have_css("[role='alert']", text: "The attachment could not be read")
         expect(page).to have_button("Try again")
         expect(page).to have_link("Download", href: /#{Regexp.escape(schematic.short_path)}\z/)
-        expect(page).to have_no_css("iframe", visible: :all)
+        expect(page).to have_no_css("canvas", visible: :all)
       end
     end
   end
@@ -192,7 +168,7 @@ RSpec.describe "Litematic attachment previews" do
 
       expect(page).to have_link(schematic.original_filename, href: schematic.short_path)
       expect(page).to have_no_css(".litematic-attachment")
-      expect(viewer_requests).to be_empty
+      expect(asset_requests).to be_empty
       expect(download_requests).to be_empty
     end
   end
