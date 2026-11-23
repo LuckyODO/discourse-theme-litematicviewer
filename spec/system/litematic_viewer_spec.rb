@@ -3,7 +3,29 @@
 require "base64"
 require "tempfile"
 
-RSpec.describe "Litematic attachment previews" do
+# The theme CI container has no GPU. Keep Discourse's normal driver options and
+# network restrictions, but use a separate software-WebGL browser for this group.
+module LitematicWebGLSystemDriver
+  def driver_for(example)
+    driver = super
+    example.metadata[:litematic_webgl] ? :"#{driver}_litematic_webgl" : driver
+  end
+
+  private
+
+  def register_chrome(name, mobile:, **options)
+    if RSpec.current_example&.metadata&.dig(:litematic_webgl)
+      name = :"#{name}_litematic_webgl" unless name.to_s.end_with?("_litematic_webgl")
+      options[:args] = Array(options[:args]) +
+        %w[--enable-webgl --use-gl=angle --use-angle=swiftshader --enable-unsafe-swiftshader]
+    end
+    super(name, mobile: mobile, **options)
+  end
+end
+
+SystemDrivers.singleton_class.prepend(LitematicWebGLSystemDriver)
+
+RSpec.describe "Litematic attachment previews", litematic_webgl: true do
   let(:schematic) do
     Tempfile.create(%w[starter-house .litematic]) do |file|
       file.binmode
