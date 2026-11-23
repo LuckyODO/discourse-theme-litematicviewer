@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Litematic Viewer — isolated browser harness</title>
+    <link rel="stylesheet" href="/theme.css" />
+    <style>
+      :root {
+        --primary: #222;
+        --primary-low: #ddd;
+        --primary-high: #555;
+        --secondary: #fff;
+        --tertiary: #0076ad;
+        --d-border-radius: 4px;
+        --font-down-1: 0.875rem;
+        font:
+          16px/1.5 system-ui,
+          sans-serif;
+        color: var(--primary);
+        background: #f8f9fa;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+      }
+      header.site {
+        background: white;
+        border-bottom: 1px solid #ddd;
+        padding: 1rem max(1rem, calc((100% - 1000px) / 2));
+        font-weight: 600;
+      }
+      main {
+        max-width: 1000px;
+        margin: 3rem auto;
+        padding: 0 1rem;
+      }
+      h1 {
+        font-size: 1.75rem;
+        line-height: 1.25;
+      }
+      .harness-note {
+        font-size: 0.875rem;
+        color: #555;
+      }
+      .post {
+        padding: 1.5rem 0;
+        border-top: 1px solid #ddd;
+      }
+      .author {
+        font-weight: 600;
+      }
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border: 0;
+        border-radius: 4px;
+        font: inherit;
+        padding: 0.5em 0.875em;
+        cursor: pointer;
+        color: #222;
+        background: #e9e9e9;
+      }
+      a {
+        color: #0076ad;
+      }
+      .btn-primary {
+        color: white;
+        background: #0076ad;
+      }
+      .btn:hover {
+        filter: brightness(0.96);
+      }
+      .btn:focus-visible {
+        outline: 2px solid #0076ad;
+        outline-offset: 2px;
+      }
+      dialog {
+        max-width: none;
+        padding: 0;
+        border: 0;
+        border-radius: 6px;
+        color: inherit;
+      }
+      dialog::backdrop {
+        background: rgb(0 0 0 / 0.55);
+      }
+      .d-modal__header {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        justify-content: space-between;
+        padding: 1rem 1.25rem;
+        border-bottom: 1px solid #ddd;
+      }
+      .d-modal__title {
+        font-size: 1.125rem;
+        margin: 0;
+      }
+      .d-modal__footer {
+        padding: 0.875rem 1.25rem;
+        border-top: 1px solid #ddd;
+      }
+      .litematic-preview__status[hidden] {
+        display: none;
+      }
+      @media (max-width: 600px) {
+        main {
+          margin-top: 1.5rem;
+        }
+        dialog {
+          margin: auto 0;
+          border-radius: 0;
+        }
+        .d-modal__header {
+          padding: 0.75rem 1rem;
+        }
+        .d-modal__footer {
+          padding: 0.75rem 1rem;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="site">玩家建筑分享</header>
+    <main>
+      <h1>林间小亭 · 投影文件</h1>
+      <p class="harness-note">
+        独立测试页面：使用真实附件与预览模块。此页面并非运行中的
+        Discourse；建筑为自动生成的测试样本。
+      </p>
+      <article class="post">
+        <div class="author">建筑测试员</div>
+        <div class="cooked">
+          <p>分享一个小亭子。点击 3D 预览即可查看结构，也可以直接下载。</p>
+          <p>
+            <a class="attachment" href="/uploads/short-url/pavilion"
+              >林间小亭.litematic</a
+            >
+          </p>
+          <p><a class="attachment" href="/notes.txt">说明.txt</a></p>
+        </div>
+      </article>
+    </main>
+    <dialog class="litematic-preview-modal" aria-labelledby="preview-title">
+      <div class="d-modal__container">
+        <div class="d-modal__header">
+          <h2 id="preview-title" class="d-modal__title"></h2>
+          <button class="btn" id="close" aria-label="关闭预览">关闭</button>
+        </div>
+        <div class="d-modal__body">
+          <div class="litematic-preview">
+            <div class="litematic-preview__stage"></div>
+            <div class="litematic-preview__status" role="status">
+              <p id="status-text"></p>
+              <progress id="progress" aria-label="加载进度"></progress>
+              <button class="btn" id="retry" hidden>重试</button>
+            </div>
+          </div>
+        </div>
+        <div class="d-modal__footer">
+          <span class="litematic-preview__hint"
+            >拖动旋转 · 滚轮或双指缩放 · Esc 关闭</span
+          >
+          <a class="btn btn-primary litematic-preview__download">下载</a>
+        </div>
+      </div>
+    </dialog>
+    <script type="module" src="/test/browser/harness.mjs"></script>
+  </body>
+</html>

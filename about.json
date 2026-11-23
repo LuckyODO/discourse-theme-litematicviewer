@@ -1,12 +1,11 @@
 {
-  "name": "TODO",
+  "name": "Litematic Viewer",
   "component": true,
-  "authors": "Discourse",
-  "about_url": "TODO: Put your theme's public repo or Meta topic URL here",
-  "license_url": "TODO: Put your theme's LICENSE URL here",
-  "learn_more": "TODO",
-  "theme_version": "0.0.1",
-  "minimum_discourse_version": null,
+  "authors": "LuckyODO",
+  "about_url": "https://github.com/LuckyODO/discourse-theme-litematicviewer",
+  "license_url": "https://github.com/LuckyODO/discourse-theme-litematicviewer/blob/main/LICENSE",
+  "theme_version": "1.0.0",
+  "minimum_discourse_version": "2026.10.0-latest",
   "maximum_discourse_version": null,
   "assets": {},
   "modifiers": {}

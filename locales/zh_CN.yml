@@ -1,0 +1,26 @@
+zh_CN:
+  theme_metadata:
+    description: "将上传的 Litematic 附件转换为 3D 预览入口，点击弹窗查看，支持独立下载。"
+    settings:
+      enabled: "在主题帖的 .litematic 附件旁显示 3D 预览和下载按钮。"
+      viewer_url: "支持 litematic-preview-v1 协议的 LitematicWebViewer 完整页面地址。默认使用公共查看器；请仅配置受信任的 HTTPS 地址，附件数据会在访客浏览器内传给该查看器。"
+      max_preview_size_mb: "可预览的压缩附件大小上限（MiB），不影响下载。查看器还会限制解压后的数据和模型规模。"
+      load_timeout_seconds: "下载附件并初始化查看器的最长等待时间（秒）。"
+      viewer_theme: "查看器配色。auto 跟随访客系统；固定配色的论坛可选择 light 或 dark。"
+  litematic:
+    preview: "3D 预览"
+    download: "下载"
+    retry: "重试"
+    frame_title: "%{name} 的 3D 预览"
+    download_status: "正在下载投影文件…"
+    viewer: "正在准备 3D 预览…"
+    hint: "拖动旋转 · 滚轮或双指缩放 · Esc 关闭"
+    errors:
+      unresolved: "附件链接尚未就绪，请稍候重试。"
+      download: "无法读取附件，请确认可以下载该文件后重试。"
+      too_large: "文件超过 %{size} MiB 的预览上限，仍可直接下载。"
+      empty: "此附件为空，请下载并检查原文件。"
+      invalid: "此附件不是 gzip 压缩的 Litematic 文件，请下载并检查原文件。"
+      viewer: "暂时无法预览此投影，请重试或下载后使用 Litematica 打开。"
+      timeout: "预览加载超时，请重试或直接下载投影文件。"
+      configuration: "预览服务配置有误，仍可直接下载投影文件。"

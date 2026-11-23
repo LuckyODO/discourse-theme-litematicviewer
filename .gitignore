@@ -1,3 +1,7 @@
 node_modules
 .discourse-site
 .eslintcache
+.impeccable/
+test-results/
+playwright-report/
+tsconfig.tsbuildinfo

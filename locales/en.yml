@@ -1,5 +1,26 @@
 en:
   theme_metadata:
-    description: "TODO"
+    description: "Preview uploaded Litematic schematics in a 3D dialog, with a separate download button."
     settings:
-      example_setting: "A description of a setting."
+      enabled: "Add 3D preview and download controls to .litematic attachments in topics."
+      viewer_url: "Full LitematicWebViewer page URL supporting the litematic-preview-v1 protocol. Default: the public viewer service. Only trusted HTTPS viewers should be used; attachment data is passed to this viewer in the visitor's browser."
+      max_preview_size_mb: "Maximum compressed attachment size to preview, in MiB. Downloads remain available. The viewer also imposes its own decompressed/model limits."
+      load_timeout_seconds: "Maximum seconds to download the attachment and initialize the viewer."
+      viewer_theme: "Viewer appearance. Auto follows the visitor's operating system; choose light or dark to match a fixed forum theme."
+  litematic:
+    preview: "3D preview"
+    download: "Download"
+    retry: "Try again"
+    frame_title: "3D preview of %{name}"
+    download_status: "Downloading schematic…"
+    viewer: "Preparing 3D preview…"
+    hint: "Drag to rotate · Scroll or pinch to zoom · Esc to close"
+    errors:
+      unresolved: "This attachment link is not ready yet. Wait a moment, then try again."
+      download: "The attachment could not be read. Check that you can download it, then try again."
+      too_large: "This file exceeds the %{size} MiB preview limit. You can still download it."
+      empty: "This attachment is empty. Download it to check the original file."
+      invalid: "This attachment is not a gzip-compressed Litematic file. Download it to check the original file."
+      viewer: "This schematic could not be previewed. Try again or download it to open in Litematica."
+      timeout: "The preview took too long to load. Try again or download the schematic."
+      configuration: "The preview service is not configured correctly. You can still download the schematic."

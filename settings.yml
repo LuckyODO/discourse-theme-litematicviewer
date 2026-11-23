@@ -1,2 +1,19 @@
-example_setting:
+enabled:
   default: true
+viewer_url:
+  default: "https://lwv.loafing.club/index.html"
+max_preview_size_mb:
+  default: 32
+  min: 1
+  max: 64
+load_timeout_seconds:
+  default: 90
+  min: 15
+  max: 300
+viewer_theme:
+  default: auto
+  type: enum
+  choices:
+    - auto
+    - light
+    - dark
